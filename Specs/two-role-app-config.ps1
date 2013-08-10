@@ -12,8 +12,8 @@ Add-WebsiteRole $myapp -Name web -PackageUrl http://www.mysite.com/web-package.z
 Add-ServiceRole $myapp -Name app -PackageUrl http://www.mysite.com/service-package.zip
 
 # add custom deployment task
-Add-DeploymentTask $myapp -BeforeDeploy -Role web -Version 1.0.0 {
-	# do something on "primary" node of "web" role before deployment
+Add-DeploymentTask $myapp -Role web -BeforeDeploy -Version 1.0.0 {
+	# do something REMOTELY on "primary" node of "web" role before deployment
 	# this could be used for setting up load balancer or running SQL scripts, i.e. anything that must be run once for all role nodes
 }
 
@@ -22,16 +22,36 @@ Add-DeploymentTask $myapp -BeforeDeploy {
     Write-Output "Hello 1"
 }
 
-Add-DeploymentTask $myapp -AfterRollback -Node web -Version 1.2.0 {
-	# do something on EACH node of "web" role after successful rollback from 1.2.0 version
+Add-DeploymentTask $myapp -Node web -AfterRollback -Version 1.2.0 {
+	# do something REMOTELY on EACH node of "web" role after successful rollback from 1.2.0 version
     Write-Output "Hello 2"
 }
 
-Add-DeploymentTask $myapp -Role web -AfterRollback -Version 1.2.0 {
-    
-}
-
 $myApp
+
+# describe Staging environment
+$staging = New-Environment Staging -Default
+Add-EnvironmentServer $staging "test-web1.cloudapp.net"
+
+# describe Production environment
+$production = New-Environment Production
+Add-EnvironmentServer $production "prod-web1.cloudapp.net" -Roles web,app -Primary
+Add-EnvironmentServer $production "prod-web2.cloudapp.net" -Roles web
+
+# set global deployment configuration
+Set-DeploymentConfig applicationsFolder "$($env:SystemDrive)\applications"
+
+# perform deployment to staging
+New-Deployment $myapp 1.0.0 -To $staging -Serial
+
+# remove deployment
+Remove-Deployment $myapp -From $staging
+
+# rollback deployment
+Restore-Deployment $myapp -On $staging
+
+# restart deployment
+Restart-Deployment $myapp -On $staging
 
 <#
 Application events:
