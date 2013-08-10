@@ -1,6 +1,6 @@
 # import AppRoller
 $currentPath = Split-Path $myinvocation.mycommand.path
-Import-Module "$currentPath\AppRoller.psm1"
+Import-Module (Resolve-Path (Join-Path $currentPath  ..\AppRoller.psm1))
 
 # create new application
 $myApp = New-Application MyApp
