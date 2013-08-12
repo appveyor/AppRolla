@@ -1,3 +1,11 @@
+# setup context
+$script:context = @{}
+$currentContext = $script:context
+$currentContext.applications = @{}
+$currentContext.environments = @{}
+$currentContext.defaultEnvironment = $null
+$currentContext.tasks = @{}
+
 function Set-DeploymentConfig
 {
     [CmdletBinding()]
@@ -19,19 +27,56 @@ function New-Application
     param
     (
         [Parameter(Position=0, Mandatory=$true)]
-        $Name
+        $Name,
+
+        [Parameter(Mandatory=$false)]
+        $BasePath,
+
+        [Parameter(Mandatory=$false)]
+        $Variables = @{}
     )
 
-    Write-Output "New-Application $Name"
+    Write-Verbose "New-Application $Name"
 
-    $app = @{ "name" = $Name }
+    # verify if application already exists
+    if($currentContext.applications[$Name] -ne $null)
+    {
+        throw "Application $Name already exists. Choose a different name."
+    }
+
+    # add new application
+    $app = @{
+        Name = $Name
+        BasePath = $BasePath
+        Variables = $Variables
+        Roles = @{}
+        DeploymentTasks = New-Object System.Collections.ArrayList
+    }
+
+    $currentContext.applications[$Name] = $app
 
     # output to pipeline
     $app
 }
 
+function Get-Application
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true)]
+        $Name
+    )
 
-function Add-WebsiteRole
+    $app = $currentContext.applications[$Name]
+    if($app -ne $null)
+    {
+        throw "Application $Name not found."
+    }
+}
+
+
+function Add-WebSiteRole
 {
     [CmdletBinding()]
     param
@@ -40,16 +85,59 @@ function Add-WebsiteRole
         $Application,
 
         [Parameter(Mandatory=$true)]
-        $Name,
+        [string]$Name,
+
+        [Parameter(Mandatory=$false)]
+        [string]$DeploymentGroup,
 
         [Parameter(Mandatory=$true)]
-        $PackageUrl
+        [string]$PackageUrl,
+
+        [Parameter(Mandatory=$false)]
+        [string]$BasePath = $null,
+
+        [Parameter(Mandatory=$false)]
+        [string]$WebsiteName = $null,
+
+        [Parameter(Mandatory=$false)]
+        [string]$WebsiteProtocol = $null,
+
+        [Parameter(Mandatory=$false)]
+        [string]$WebsiteIP = $null,
+
+        [Parameter(Mandatory=$false)]
+        [int]$WebsitePort = $null,
+
+        [Parameter(Mandatory=$false)]
+        [string]$WebsiteHost = $null,
+
+        [Parameter(Mandatory=$false)]
+        $Variables = @{}
     )
 
-    Write-Output "Add-WebsiteRole"
+    Write-Verbose "Add-WebsiteRole"
+
+    # verify if the role with such name exists
+    $role = $Application.Roles[$Name]
+    if($role -ne $null)
+    {
+        throw "Application $($Application.Name) has already $Name role configured. Choose a different role name."
+    }
 
     # add role info to the application config
-    # ...
+    $role = @{
+        Name = $Name
+        DeploymentGroup = ValueOrDefault $DeploymentGroup "web"
+        PackageUrl = $PackageUrl
+        BasePath = $BasePath
+        WebsiteName = ValueOrDefault $WebsiteName "Default Web Site"
+        WebsiteProtocol = ValueOrDefault $WebsiteProtocol "http"
+        WebsiteIP = ValueOrDefault $WebsiteIP "*"
+        WebsitePort = ValueOrDefault $WebsitePort 80
+        WebsiteHost = $WebsiteHost
+        Variables = $Variables
+    }
+    $Application.Roles[$Name] = $role
 }
 
 function Add-ServiceRole
@@ -63,51 +151,129 @@ function Add-ServiceRole
         [Parameter(Mandatory=$true)]
         $Name,
 
+        [Parameter(Mandatory=$false)]
+        $DeploymentGroup,
+
         [Parameter(Mandatory=$true)]
-        $PackageUrl
+        $PackageUrl,
+
+        [Parameter(Mandatory=$false)]
+        [string]$BasePath,
+
+        [Parameter(Mandatory=$false)]
+        [string]$ServiceName = $null,
+
+        [Parameter(Mandatory=$false)]
+        [string]$ServiceDisplayName = $null,
+
+        [Parameter(Mandatory=$false)]
+        [string]$ServiceDescription = $null,
+
+        [Parameter(Mandatory=$false)]
+        $Variables = @{}
     )
 
-    Write-Output "Add-ServiceRole"
+    Write-Verbose "Add-ServiceRole"
+
+    # verify if the role with such name exists
+    $role = $Application.Roles[$Name]
+    if($role -ne $null)
+    {
+        throw "Application $($Application.Name) has already $Name role configured. Choose a different role name."
+    }
 
     # add role info to the application config
-    # ...
+    $role = @{
+        Name = $Name
+        DeploymentGroup = ValueOrDefault $DeploymentGroup "app"
+        PackageUrl = $PackageUrl
+        BasePath = $BasePath
+        ServiceName = ValueOrDefault $ServiceName $Name
+        ServiceDisplayName = ValueOrDefault $ServiceDisplayName $Name
+        ServiceDescription = $ServiceDescription
+        Variables = $Variables
+    }
+    $Application.Roles[$Name] = $role
 }
 
 
-function Add-DeploymentTask
+function New-DeploymentTask
 {
     [CmdletBinding()]
     param
     (
-        [Parameter(Position=0, Mandatory=$true, ValueFromPipeline=$true)]
+        [Parameter(Position=0, Mandatory=$true)]
+        $Name,
+
+        [Parameter(Position=1, Mandatory=$true)]
+        [scriptblock]$Script,
+
+        [Parameter(Mandatory=$false)]
+        $Before = $null,
+        
+        [Parameter(Mandatory=$false)]
+        $After = $null,
+
+        [Parameter(Mandatory=$false)]
         $Application,
-
-        [Parameter(Position=1, Mandatory=$false)]
-        [scriptblock]$Action = $null,
-
-        [Parameter(Mandatory=$false)]
-        [switch]$BeforeDeploy = $false,
         
         [Parameter(Mandatory=$false)]
-        [switch]$AfterRollback = $false,
-        
-        [Parameter(Mandatory=$false)]
-        $Version,
+        $Version = $null,
 
         [Parameter(Mandatory=$false)]
-        $ApplicationName,
+        [string[]]$DeploymentGroup = $null,
 
         [Parameter(Mandatory=$false)]
-        $Role,
-
-        [Parameter(Mandatory=$false)]
-        $Node
+        [string[]]$DeploymentGroupServer = $null
     )
 
-    Write-Output "New-DeploymentTask"
+    Write-Verbose "New-DeploymentTask"
 
-    $Application
-    $Action
+    # verify if task already exists
+    if($currentContext.tasks[$Name] -ne $null)
+    {
+        throw "Deployment task $Name already exists. Choose a different name."
+    }
+
+    # verify parameters
+    if($Before -eq $null -and $After -eq $null)
+    {
+        throw "Either -Before or -After should be specified."
+    }
+
+    # create new deployment task object
+    $task = @{
+        Name = $Name
+        Script = $Script
+        BeforeTasks = New-Object System.Collections.ArrayList
+        AfterTasks = New-Object System.Collections.ArrayList
+        Application = $Application
+        Version = $Version
+        DeploymentGroup = $DeploymentGroup
+        DeploymentGroupServer = $DeploymentGroupServer
+    }
+
+    # add task
+    $currentContext.tasks[$Name] = $task
+
+    # bind task to others
+    if($Before -ne $null)
+    {
+        $beforeTask = $currentContext.tasks[$Before]
+        if($beforeTask -ne $null)
+        {
+            $beforeTask.BeforeTasks.Add($task) > $null
+        }
+    }
+
+    if($After -ne $null)
+    {
+        $afterTask = $currentContext.tasks[$After]
+        if($afterTask -ne $null)
+        {
+            $afterTask.AfterTasks.Add($task) > $null
+        }
+    }
 }
 
 
@@ -120,12 +286,34 @@ function New-Environment
         $Name,
 
         [Parameter(Mandatory=$false)]
+        [PSCredential]$Credential,
+
+        [Parameter(Mandatory=$false)]
         [switch]$Default = $false
     )
 
-    Write-Output "New-Environment $Name"
+    Write-Verbose "New-Environment $Name"
 
-    $environment = @{ "name" = $Name }
+    # verify if environment already exists
+    if($currentContext.environments[$Name] -ne $null)
+    {
+        throw "Environment $Name already exists. Choose a different name."
+    }
+
+    # add new environment
+    $environment = @{
+        Name = $Name
+        Credential = $Credential
+        Servers = @{}
+    }
+
+    $currentContext.environments[$Name] = $environment
+
+    # set default environment
+    if($Default)
+    {
+        $currentContext.defaultEnvironment = $environment
+    }
 
     # output to pipeline
     $environment
@@ -141,16 +329,38 @@ function Add-EnvironmentServer
         $Environment,
 
         [Parameter(Position=1, Mandatory=$true)]
-        $ServerAddress,
+        [string]$ServerAddress,
 
         [Parameter(Mandatory=$false)]
-        [array]$Roles,
+        [int]$Port,
+
+        [Parameter(Mandatory=$false)]
+        [string[]]$DeploymentGroup = $null,
         
         [Parameter(Mandatory=$false)]
-        [switch]$Primary = $false
+        [switch]$Primary = $false,
+
+        [Parameter(Mandatory=$false)]
+        [PSCredential]$Credential = $null
     )
 
-    Write-Output "Add-EnvironmentServer $ServerAddress"
+    Write-Verbose "Add-EnvironmentServer $ServerAddress"
+
+    # verify if the server with specified address exists
+    $server = $Environment.Servers[$ServerAddress]
+    if($server -ne $null)
+    {
+        throw "Environment $($Environment.Name) has already $ServerAddress server added."
+    }
+
+    # add role info to the application config
+    $server = @{
+        ServerAddress = $ServerAddress
+        Port = ValueOrDefault $Port 5986
+        DeploymentGroup = $DeploymentGroup
+        Credential = ValueOrDefault $Credential $Environment.Credential
+    }
+    $Environment.Servers[$ServerAddress] = $server
 }
 
 function New-Deployment
@@ -233,3 +443,67 @@ function Restart-Deployment
 
     Write-Output "Restart application $($Application.name) on $($Environment.name)"
 }
+
+function Stop-Deployment
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true, ValueFromPipeline=$true)]
+        $Application,
+
+        [Parameter(Position=1, Mandatory=$false)][alias("On")]
+        $Environment,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Serial = $false
+    )
+
+    Write-Output "Stopping application $($Application.name) on $($Environment.name)"
+}
+
+function Start-Deployment
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true, ValueFromPipeline=$true)]
+        $Application,
+
+        [Parameter(Position=1, Mandatory=$false)][alias("On")]
+        $Environment,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Serial = $false
+    )
+
+    Write-Output "Starting application $($Application.name) on $($Environment.name)"
+}
+
+function ValueOrDefault($value, $default)
+{
+    If($value)
+    {
+        return $value
+    }
+    return $default
+}
+
+function AddStandardTask($taskName)
+{
+    $currentContext.tasks[$taskName] = @{
+        Name = $taskName
+        BeforeTasks = New-Object System.Collections.ArrayList
+        AfterTasks = New-Object System.Collections.ArrayList
+    }
+}
+
+# add standard tasks
+AddStandardTask "deploy"
+AddStandardTask "remove"
+AddStandardTask "rollback"
+
+Export-ModuleMember -Function `
+    New-Application, Add-WebSiteRole, Add-ServiceRole, New-DeploymentTask, `
+    New-Environment, Add-EnvironmentServer, `
+    New-Deployment, Remove-Deployment, Restore-Deployment, Restart-Deployment, Stop-Deployment, Start-Deployment
