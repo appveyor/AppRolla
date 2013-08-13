@@ -1,10 +1,15 @@
-# setup context
+# config
+$config = @{}
+$config.taskExecutionTimeout = 300 # 5 min
+
+# context
 $script:context = @{}
 $currentContext = $script:context
 $currentContext.applications = @{}
 $currentContext.environments = @{}
 $currentContext.defaultEnvironment = $null
 $currentContext.tasks = @{}
+$currentContext.remoteSessions = @{}
 
 function Set-DeploymentConfig
 {
@@ -18,7 +23,7 @@ function Set-DeploymentConfig
         $Value
     )
 
-    # todo
+    $config[$Name] = $Value
 }
 
 function New-Application
@@ -69,10 +74,11 @@ function Get-Application
     )
 
     $app = $currentContext.applications[$Name]
-    if($app -ne $null)
+    if($app -eq $null)
     {
         throw "Application $Name not found."
     }
+    return $app
 }
 
 
@@ -215,7 +221,7 @@ function New-DeploymentTask
         $After = $null,
 
         [Parameter(Mandatory=$false)]
-        $Application,
+        $Application = $null,
         
         [Parameter(Mandatory=$false)]
         $Version = $null,
@@ -224,7 +230,7 @@ function New-DeploymentTask
         [string[]]$DeploymentGroup = $null,
 
         [Parameter(Mandatory=$false)]
-        [string[]]$DeploymentGroupServer = $null
+        [switch]$PerGroup = $false
     )
 
     Write-Verbose "New-DeploymentTask"
@@ -233,12 +239,6 @@ function New-DeploymentTask
     if($currentContext.tasks[$Name] -ne $null)
     {
         throw "Deployment task $Name already exists. Choose a different name."
-    }
-
-    # verify parameters
-    if($Before -eq $null -and $After -eq $null)
-    {
-        throw "Either -Before or -After should be specified."
     }
 
     # create new deployment task object
@@ -250,7 +250,7 @@ function New-DeploymentTask
         Application = $Application
         Version = $Version
         DeploymentGroup = $DeploymentGroup
-        DeploymentGroupServer = $DeploymentGroupServer
+        PerGroup = $PerGroup
     }
 
     # add task
@@ -264,6 +264,10 @@ function New-DeploymentTask
         {
             $beforeTask.BeforeTasks.Add($task) > $null
         }
+        else
+        {
+            throw "Wrong before task: $Before"
+        }
     }
 
     if($After -ne $null)
@@ -272,6 +276,10 @@ function New-DeploymentTask
         if($afterTask -ne $null)
         {
             $afterTask.AfterTasks.Add($task) > $null
+        }
+        else
+        {
+            throw "Wrong after task: $After"
         }
     }
 }
@@ -319,6 +327,22 @@ function New-Environment
     $environment
 }
 
+function Get-Environment
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true)]
+        $Name
+    )
+
+    $environment = $currentContext.environments[$Name]
+    if($environment -eq $null)
+    {
+        throw "Environment $Name not found."
+    }
+    return $environment
+}
 
 function Add-EnvironmentServer
 {
@@ -336,9 +360,6 @@ function Add-EnvironmentServer
 
         [Parameter(Mandatory=$false)]
         [string[]]$DeploymentGroup = $null,
-        
-        [Parameter(Mandatory=$false)]
-        [switch]$Primary = $false,
 
         [Parameter(Mandatory=$false)]
         [PSCredential]$Credential = $null
@@ -381,7 +402,237 @@ function New-Deployment
         [switch]$Serial = $false
     )
 
-    Write-Output "Deploying application $($Application.name) $Version to $($Environment.name)"
+    Invoke-RemoteTask deploy $application $version $environment $serial
+}
+
+function Invoke-RemoteTask
+{
+    param
+    (
+        [Parameter(Position=0, Mandatory=$false)]
+        [string]$taskName,
+        
+        [Parameter(Position=1, Mandatory=$false)]
+        $application,
+        
+        [Parameter(Position=2, Mandatory=$false)]
+        [string]$version,
+        
+        [Parameter(Position=3, Mandatory=$false)]
+        $environment,
+        
+        [Parameter(Position=4, Mandatory=$false)]
+        [switch]$serial = $false
+    )
+
+    if($application -is [string])
+    {
+        $application = Get-Application $Application
+    }
+
+    if($environment -is [string])
+    {
+        $environment = Get-Environment $environment
+    }
+
+    Write-Verbose "Running `"$taskName`" task for application $($application.Name) version $version on `"$($environment.Name)` environment"
+
+    # build remote task context
+    $taskContext = @{
+        TaskName = $taskName
+        Application = $Application
+        Version = $Version
+        Environment = $Environment
+        ServerScripts = @{}
+        Serial = $Serial
+    }
+
+    # add init task scripts
+    $initTask = $currentContext.tasks["init"]
+    Add-BeforeTasks $taskContext $initTask.BeforeTasks
+    Add-TaskScriptToServers $taskContext $initTask
+    Add-AfterTasks $taskContext $initTask.AfterTasks
+
+    # add main task
+    $task = $currentContext.tasks[$taskName]
+
+    # change task deployment group to application roles union
+    $task.DeploymentGroup = @(0) * $taskContext.Application.Roles.count
+    $i = 0
+    foreach($role in $taskContext.Application.Roles.values)
+    {
+        $task.DeploymentGroup[$i++] = $role.DeploymentGroup
+    }
+
+    # add before tasks recursively
+    Add-BeforeTasks $taskContext $task.BeforeTasks
+
+    # add task itself
+    Add-TaskScriptToServers $taskContext $task
+
+    # add after tasks recursively
+    Add-AfterTasks $taskContext $task.AfterTasks
+
+    if($taskContext.ServerScripts.count -eq 0)
+    {
+        throw "No servers will be affected by `"$taskName`" command."
+    }
+
+    # run scripts on each server
+    $jobs = @(0) * $taskContext.ServerScripts.count
+    $jobCount = 0
+    foreach($serverAddress in $taskContext.ServerScripts.keys)
+    {
+        Write-Verbose "Run script on $($serverAddress) server"
+
+        # get server remote session
+        $server = $taskContext.Environment.Servers[$serverAddress]
+        $credential = $server.Credential
+        if($credential -eq $null)
+        {
+            $credential = $taskContext.Environment.Credential
+        }
+        $session = Get-RemoteSession -serverAddress $server.ServerAddress -port $server.Port -credential $credential
+
+        # server sequence to run
+        $script = $taskContext.ServerScripts[$serverAddress]
+
+        $remoteScript = {
+            param (
+                $taskName,
+                $application,
+                $version,
+                $deploymentGroup,
+                $script
+            )
+
+            # run script parts one-by-one
+            foreach($scriptBlock in $script)
+            {
+                $sb = $ExecutionContext.InvokeCommand.NewScriptBlock($scriptBlock)
+                .$sb
+            }
+        }
+
+        if($taskContext.Serial)
+        {
+            # run script on remote server synchronously
+            Invoke-Command -Session $session -ScriptBlock $remoteScript -ArgumentList `
+                $taskContext.TaskName,`
+                $taskContext.Application,`
+                $taskContext.Version,`
+                $server.DeploymentGroup,`
+                (,$script)
+        }
+        else
+        {
+            # run script on remote server as a job
+            $jobs[$jobCount++] = Invoke-Command -Session $session -ScriptBlock $remoteScript -AsJob -ArgumentList `
+                $taskContext.TaskName,`
+                $taskContext.Application,`
+                $taskContext.Version,`
+                $server.DeploymentGroup,`
+                (,$script)
+        }
+    }
+
+    # wait jobs
+    if(-not $taskContext.Serial)
+    {
+        Wait-Job -Job $jobs -Timeout $config.taskExecutionTimeout > $null
+
+        # get results
+        for($i = 0; $i -lt $jobCount; $i++)
+        {
+            Receive-Job -Job $jobs[$i]
+        }
+    }
+
+    # close remote sessions
+    Remove-RemoteSessions
+}
+
+function Add-TaskScriptToServers($taskContext, $task)
+{
+    # filter by application name and version
+    if($task.Application -ne $null -and $task.Application -ne $taskContext.Application.Name)
+    {
+        # task application name is specified but does not match
+        return
+    }
+    else
+    {
+        # OK, application name does match, check version now if specified
+        if($task.Version -ne $null -and $task.Version -ne $taskContext.Version)
+        {
+            # version is specified but does not match
+            Write-Output "App version does not match!!!!"
+            return
+        }
+    }
+
+    # iterate through all environment servers and see if the task applies
+    foreach($server in $taskContext.Environment.Servers.values)
+    {
+        $applied = $false
+        if($task.DeploymentGroup -eq $null -or $server.DeploymentGroup -eq $null)
+        {
+            # task is applied to all groups
+            $applied = $true
+        }
+        else
+        {
+            # find intersection of two arrays of DeploymentGroup
+            $commonGroups = $task.DeploymentGroup | ?{$server.DeploymentGroup -contains $_}
+
+            if($commonGroups.length -gt 0)
+            {
+                $applied = $true
+            }
+        }
+
+        if($applied)
+        {
+            # add task script to the array of server scripts
+            $serverScripts = $taskContext.ServerScripts[$server.ServerAddress]
+            if($serverScripts -eq $null)
+            {
+                $serverScripts = New-Object System.Collections.ArrayList
+                $taskContext.ServerScripts[$server.ServerAddress] = $serverScripts
+            }
+            $serverScripts.Add($task.Script) > $null
+
+            # is it per group task
+            if($task.PerGroup)
+            {
+                break
+            }
+        }
+    }
+}
+
+function Add-BeforeTasks($taskContext, $beforeTasks)
+{
+    foreach($task in $beforeTasks)
+    {
+        # add task before tasks
+        Add-BeforeTasks $taskContext $task.BeforeTasks
+        
+        # add task itself
+        Add-TaskScriptToServers $taskContext $task
+    }
+}
+
+function Add-AfterTasks($taskContext, $afterTasks)
+{
+    foreach($task in $afterTasks)
+    {
+        # add task itself
+        Add-TaskScriptToServers $taskContext $task
+                
+        # add tasks after
+        Add-AfterTasks $taskContext $task.AfterTasks > $null
+    }
 }
 
 function Remove-Deployment
@@ -480,6 +731,50 @@ function Start-Deployment
     Write-Output "Starting application $($Application.name) on $($Environment.name)"
 }
 
+
+# --------------------------------------------
+#
+#   Private functions
+#
+# --------------------------------------------
+
+function Get-RemoteSession
+{
+    [CmdletBinding()]
+    param
+    (
+        [string]$serverAddress,
+        [int]$port,
+        [PSCredential]$credential
+    )
+
+    $session = $currentContext.remoteSessions[$serverAddress]
+    if($session -eq $null)
+    {
+        Write-Verbose "Connecting to $($serverAddress) port $port"
+
+        # start new session
+        $session = New-PSSession -ComputerName $serverAddress -Port $port -Credential $credential `
+            -UseSSL -SessionOption (New-PSSessionOption -SkipCACheck -SkipCNCheck)
+
+        # store it in a cache
+        $currentContext.remoteSessions[$serverAddress] = $session
+    }
+
+    return $session
+}
+
+function Remove-RemoteSessions
+{
+    foreach($session in $currentContext.remoteSessions.values)
+    {
+        Write-Verbose "Closing remote session to $($session.ComputerName)"
+        Remove-PSSession -Session $session
+    }
+
+    $currentContext.remoteSessions.Clear()
+}
+
 function ValueOrDefault($value, $default)
 {
     If($value)
@@ -489,21 +784,37 @@ function ValueOrDefault($value, $default)
     return $default
 }
 
-function AddStandardTask($taskName)
-{
-    $currentContext.tasks[$taskName] = @{
-        Name = $taskName
-        BeforeTasks = New-Object System.Collections.ArrayList
-        AfterTasks = New-Object System.Collections.ArrayList
+# --------------------------------------------
+#
+#   Init tasks
+#
+# --------------------------------------------
+New-DeploymentTask init {
+    Write-Log "Initializing deployment framework"
+}
+
+New-DeploymentTask deploy {
+    Write-Log "Deploying application"
+    Start-Sleep -s 3
+}
+
+New-DeploymentTask remove {
+    Write-Log "Removing application"
+}
+
+New-DeploymentTask rollback {
+    Write-Log "Rolling back application to the previous version"
+}
+
+New-DeploymentTask common-functions -Before init {
+    function Write-Log($message)
+    {
+        Write-Output "[$($env:COMPUTERNAME)] $(Get-Date -f g) - $message"
     }
 }
 
-# add standard tasks
-AddStandardTask "deploy"
-AddStandardTask "remove"
-AddStandardTask "rollback"
-
 Export-ModuleMember -Function `
+    Set-DeploymentConfig, `
     New-Application, Add-WebSiteRole, Add-ServiceRole, New-DeploymentTask, `
     New-Environment, Add-EnvironmentServer, `
     New-Deployment, Remove-Deployment, Restore-Deployment, Restart-Deployment, Stop-Deployment, Start-Deployment
