@@ -7,7 +7,6 @@ $script:context = @{}
 $currentContext = $script:context
 $currentContext.applications = @{}
 $currentContext.environments = @{}
-$currentContext.defaultEnvironment = $null
 $currentContext.tasks = @{}
 $currentContext.remoteSessions = @{}
 
@@ -294,41 +293,51 @@ function New-Environment
     [CmdletBinding()]
     param
     (
-        [Parameter(Position=0, Mandatory=$true)]
+        [Parameter(ParameterSetName="InCode", Position=0, Mandatory=$true)]
         $Name,
 
-        [Parameter(Mandatory=$false)]
-        [PSCredential]$Credential,
+        [Parameter(ParameterSetName="FromFile", Mandatory=$true)]
+        $File,
 
         [Parameter(Mandatory=$false)]
-        [switch]$Default = $false
+        [PSCredential]$Credential
     )
 
     Write-Verbose "New-Environment $Name"
 
-    # verify if environment already exists
-    if($currentContext.environments[$Name] -ne $null)
-    {
-        throw "Environment $Name already exists. Choose a different name."
-    }
-
-    # add new environment
+    # create new environment
     $environment = @{
         Name = $Name
-        Credential = $Credential
         Servers = @{}
     }
 
-    $currentContext.environments[$Name] = $environment
-
-    # set default environment
-    if($Default)
+    if($PsCmdlet.ParameterSetName -eq "FromFile")
     {
-        $currentContext.defaultEnvironment = $environment
+        # load environment from file
+        $environment = (Get-Content $File) -join "`n" | ConvertFrom-Json
+
+        # fix server addresses
+        foreach($serverAddress in $environment.Servers.keys)
+        {
+            $server.serverAddress = $serverAddress
+        }
     }
 
-    # output to pipeline
-    $environment
+    # verify if environment already exists
+    if($currentContext.environments[$environment.Name] -eq $null)
+    {
+        $currentContext.environments[$environment.Name] = $environment
+
+        # save credentials
+        #$environment.Credential = $Credential
+
+        # output to pipeline
+        return $environment
+    }
+    else
+    {
+        throw "Environment $Name already exists. Choose a different name."
+    }
 }
 
 function Get-Environment
@@ -386,27 +395,6 @@ function Add-EnvironmentServer
         Credential = ValueOrDefault $Credential $Environment.Credential
     }
     $Environment.Servers[$ServerAddress] = $server
-}
-
-function New-Deployment
-{
-    [CmdletBinding()]
-    param
-    (
-        [Parameter(Position=0, Mandatory=$true, ValueFromPipeline=$true)]
-        $Application,
-
-        [Parameter(Position=1, Mandatory=$true)]
-        $Version,
-
-        [Parameter(Position=2, Mandatory=$false)][alias("To")]
-        $Environment,
-
-        [Parameter(Mandatory=$false)]
-        [switch]$Serial = $false
-    )
-
-    Invoke-DeploymentTask deploy $environment $application $version -serial $serial
 }
 
 function Invoke-DeploymentTask
@@ -660,6 +648,27 @@ function Add-AfterTasks($tasks, $afterTasks)
         # add tasks after
         Add-AfterTasks $tasks $task.AfterTasks
     }
+}
+
+function New-Deployment
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true, ValueFromPipeline=$true)]
+        $Application,
+
+        [Parameter(Position=1, Mandatory=$true)]
+        $Version,
+
+        [Parameter(Position=2, Mandatory=$false)][alias("To")]
+        $Environment,
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Serial = $false
+    )
+
+    Invoke-DeploymentTask deploy $environment $application $version -serial $serial
 }
 
 function Remove-Deployment

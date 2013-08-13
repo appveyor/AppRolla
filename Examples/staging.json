@@ -1,0 +1,8 @@
+{
+	name: "Staging",
+	servers: {
+		"test-ps1.cloudapp.net": { port: 5986, deploymentGroup: ["app"] },
+		"test-ps2.cloudapp.net": { port: 51281, deploymentGroup: ["web"] },
+		"test-ps3.cloudapp.net": { port: 5986, deploymentGroup: ["app"] }
+	}
+}

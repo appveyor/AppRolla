@@ -1,4 +1,5 @@
 # import AppRoller
+remove-module AppRoller -ErrorAction SilentlyContinue
 $currentPath = Split-Path $myinvocation.mycommand.path
 Import-Module (Resolve-Path (Join-Path $currentPath  ..\AppRoller.psm1))
 
@@ -58,11 +59,16 @@ Set-DeploymentTask task3 -After rollback -Application $applicationName -Version 
 }
 
 # describe Staging environment
-$staging = New-Environment Staging -Credential $credential
+<#
+$staging = New-Environment -Name Staging -Credential $credential
 Add-EnvironmentServer $staging "test-ps2.cloudapp.net" -Port 51281 -DeploymentGroup web
 Add-EnvironmentServer $staging "test-ps1.cloudapp.net" -Port 5986 -DeploymentGroup app `
     -Credential (New-Object System.Management.Automation.PSCredential "appveyor", $securePassword)
 Add-EnvironmentServer $staging "test-ps3.cloudapp.net" -Port 5986 -DeploymentGroup app
+#>
+$staging = New-Environment -File (Join-Path $currentPath staging.json) -Credential $credential
+
+$staging
 
 # --------------------------------------------
 #
