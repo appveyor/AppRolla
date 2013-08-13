@@ -27,6 +27,9 @@ Set-DeploymentConfig taskExecutionTimeout 60 # 1 min
 $myApp = New-Application MyApp -BasePath "$($env:SystemDrive)\apps\myapp" -Variables @{
     "appveyorApiKey" = "key1"
     "appveyorApiSecret" = "secret1"
+} -OnPackageDownload {
+    #Write-Log "Download!!!!"
+    #$context.Application.Variables
 }
 
 # add website role
@@ -35,29 +38,23 @@ Add-WebSiteRole $myapp -Name "MyAppWebsite" -DeploymentGroup web -PackageUrl htt
 
 
 # add service role
-<#
 Add-ServiceRole $myapp -Name "MyAppService" -PackageUrl http://www.mysite.com/service-package.zip -Variables @{
     "ConnectionString.Default" = "server=locahost;"
 }
-#>
 
 # add custom deployment task
-New-DeploymentTask task1 -Before deploy -Application $applicationName -Version 1.0.0 -DeploymentGroup web -PerGroup {
-	# do something REMOTELY on "primary" node of "web" deployment group before deployment
-	# this could be used for setting up load balancer or running SQL scripts, i.e. anything that must be run once for all role nodes
-    Write-Log "task1: do something REMOTELY on ONE of the group nodes of web deployment group before deployment"
+Set-DeploymentTask task1 -Before deploy -Application $applicationName -Version 1.0.0 -DeploymentGroup web -PerGroup {
+    Write-Log "task1: do something on ONE of the group nodes of web deployment group before deployment"
     $a
 }
 
-New-DeploymentTask task2 -Before task1 {
-	# do something REMOTELY on ONE of the group nodes before deployment of the entire application
-    Write-Log "task2: do something REMOTELY on ONE of the group nodes before deployment of the entire application"
+Set-DeploymentTask task2 -Before task1 {
+    Write-Log "task2: do something on EACH node of every group before appliction deployment"
     $a = 1
 }
 
-New-DeploymentTask task3 -After rollback -Application $applicationName -Version 1.2.0 -DeploymentGroup web {
-	# do something REMOTELY on EACH node of "web" deployment group after successful rollback from 1.2.0 version
-    Write-Log "task3: do something REMOTELY on EACH node of web deployment group after successful rollback from 1.2.0"
+Set-DeploymentTask task3 -After rollback -Application $applicationName -Version 1.2.0 -DeploymentGroup web {
+    Write-Log "task3: do something on EACH node of web deployment group after successful rollback from 1.2.0"
 }
 
 # describe Staging environment
@@ -65,6 +62,7 @@ $staging = New-Environment Staging -Credential $credential
 Add-EnvironmentServer $staging "test-ps2.cloudapp.net" -Port 51281 -DeploymentGroup web
 Add-EnvironmentServer $staging "test-ps1.cloudapp.net" -Port 5986 -DeploymentGroup app `
     -Credential (New-Object System.Management.Automation.PSCredential "appveyor", $securePassword)
+Add-EnvironmentServer $staging "test-ps3.cloudapp.net" -Port 5986 -DeploymentGroup app
 
 # --------------------------------------------
 #
@@ -73,7 +71,13 @@ Add-EnvironmentServer $staging "test-ps1.cloudapp.net" -Port 5986 -DeploymentGro
 # --------------------------------------------
 
 # perform deployment to staging
-New-Deployment myapp 1.0.0 -To staging -Verbose # -Serial
+New-Deployment myapp 1.0.0 -To staging -Verbose #-Serial
+
+Set-DeploymentTask setup:env -DeploymentGroup app {
+    Write-Log "Setup environment for the first time: $($env:COMPUTERNAME)"
+}
+
+Invoke-DeploymentTask setup:env -On staging -Verbose
 
 # remove deployment
 #Remove-Deployment $myapp -From $staging

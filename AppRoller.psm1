@@ -38,7 +38,10 @@ function New-Application
         $BasePath,
 
         [Parameter(Mandatory=$false)]
-        $Variables = @{}
+        $Variables = @{},
+
+        [Parameter(Mandatory=$false)]
+        [scriptblock]$OnPackageDownload = $null
     )
 
     Write-Verbose "New-Application $Name"
@@ -54,6 +57,7 @@ function New-Application
         Name = $Name
         BasePath = $BasePath
         Variables = $Variables
+        OnPackageDownload = $OnPackageDownload
         Roles = @{}
         DeploymentTasks = New-Object System.Collections.ArrayList
     }
@@ -203,7 +207,7 @@ function Add-ServiceRole
 }
 
 
-function New-DeploymentTask
+function Set-DeploymentTask
 {
     [CmdletBinding()]
     param
@@ -217,7 +221,7 @@ function New-DeploymentTask
         [Parameter(Mandatory=$false)]
         $Before = $null,
         
-        [Parameter(Mandatory=$false)]
+        [Parameter(Mandatory=$false)][Alias("On")]
         $After = $null,
 
         [Parameter(Mandatory=$false)]
@@ -402,30 +406,30 @@ function New-Deployment
         [switch]$Serial = $false
     )
 
-    Invoke-RemoteTask deploy $application $version $environment $serial
+    Invoke-DeploymentTask deploy $environment $application $version -serial $serial
 }
 
-function Invoke-RemoteTask
+function Invoke-DeploymentTask
 {
     param
     (
-        [Parameter(Position=0, Mandatory=$false)]
+        [Parameter(Position=0, Mandatory=$true)]
         [string]$taskName,
-        
-        [Parameter(Position=1, Mandatory=$false)]
-        $application,
-        
-        [Parameter(Position=2, Mandatory=$false)]
-        [string]$version,
-        
-        [Parameter(Position=3, Mandatory=$false)]
+
+        [Parameter(Position=1, Mandatory=$true)][alias("On")]
         $environment,
         
-        [Parameter(Position=4, Mandatory=$false)]
-        [switch]$serial = $false
+        [Parameter(Position=2, Mandatory=$false)]
+        $application,
+        
+        [Parameter(Position=3, Mandatory=$false)]
+        [string]$version,
+        
+        [Parameter(Mandatory=$false)]
+        $serial = $false
     )
 
-    if($application -is [string])
+    if($application -ne $null -and $application -is [string])
     {
         $application = Get-Application $Application
     }
@@ -435,7 +439,14 @@ function Invoke-RemoteTask
         $environment = Get-Environment $environment
     }
 
-    Write-Verbose "Running `"$taskName`" task for application $($application.Name) version $version on `"$($environment.Name)` environment"
+    if($application)
+    {
+        Write-Verbose "Running `"$taskName`" task on `"$($environment.Name)` environment for application $($application.Name) version $version"
+    }
+    else
+    {
+        Write-Verbose "Running `"$taskName`" task on `"$($environment.Name)` environment"
+    }
 
     # build remote task context
     $taskContext = @{
@@ -447,35 +458,46 @@ function Invoke-RemoteTask
         Serial = $Serial
     }
 
-    # add init task scripts
-    $initTask = $currentContext.tasks["init"]
-    Add-BeforeTasks $taskContext $initTask.BeforeTasks
-    Add-TaskScriptToServers $taskContext $initTask
-    Add-AfterTasks $taskContext $initTask.AfterTasks
-
     # add main task
     $task = $currentContext.tasks[$taskName]
 
-    # change task deployment group to application roles union
-    $task.DeploymentGroup = @(0) * $taskContext.Application.Roles.count
-    $i = 0
-    foreach($role in $taskContext.Application.Roles.values)
+    if($task -eq $null)
     {
-        $task.DeploymentGroup[$i++] = $role.DeploymentGroup
+        throw "Task $taskName not found"
     }
 
-    # add before tasks recursively
-    Add-BeforeTasks $taskContext $task.BeforeTasks
+    # change task deployment group to application roles union
+    if($taskContext.Application)
+    {
+        $task.DeploymentGroup = @(0) * $taskContext.Application.Roles.count
+        $i = 0
+        foreach($role in $taskContext.Application.Roles.values)
+        {
+            $task.DeploymentGroup[$i++] = $role.DeploymentGroup
+        }
+    }
 
-    # add task itself
-    Add-TaskScriptToServers $taskContext $task
-
-    # add after tasks recursively
-    Add-AfterTasks $taskContext $task.AfterTasks
+    $tasks = Get-TaskChain $task
+    foreach($t in $tasks)
+    {
+        Add-TaskScriptToServers $taskContext $t
+    }
 
     if($taskContext.ServerScripts.count -eq 0)
     {
         throw "No servers will be affected by `"$taskName`" command."
+    }
+
+    # add "init" task scripts for each server
+    $initTask = $currentContext.tasks["init"]
+    $tasks = Get-TaskChain $initTask
+    foreach($serverScripts in $taskContext.ServerScripts.values)
+    {
+        $i = 0
+        foreach($t in $tasks)
+        {
+            $serverScripts.Insert($i++, $t.Script) > $null
+        }
     }
 
     # run scripts on each server
@@ -492,17 +514,23 @@ function Invoke-RemoteTask
         {
             $credential = $taskContext.Environment.Credential
         }
+
         $session = Get-RemoteSession -serverAddress $server.ServerAddress -port $server.Port -credential $credential
 
         # server sequence to run
         $script = $taskContext.ServerScripts[$serverAddress]
 
+        $scriptContext = @{
+            TaskName = $taskContext.TaskName
+            Application = $taskContext.Application
+            Version = $taskContext.Version
+            ServerAddress = $server.ServerAddress
+            ServerDeploymentGroup = $server.DeploymentGroup
+        }
+
         $remoteScript = {
             param (
-                $taskName,
-                $application,
-                $version,
-                $deploymentGroup,
+                $context,
                 $script
             )
 
@@ -517,22 +545,12 @@ function Invoke-RemoteTask
         if($taskContext.Serial)
         {
             # run script on remote server synchronously
-            Invoke-Command -Session $session -ScriptBlock $remoteScript -ArgumentList `
-                $taskContext.TaskName,`
-                $taskContext.Application,`
-                $taskContext.Version,`
-                $server.DeploymentGroup,`
-                (,$script)
+            Invoke-Command -Session $session -ScriptBlock $remoteScript -ArgumentList $scriptContext,(,$script)
         }
         else
         {
             # run script on remote server as a job
-            $jobs[$jobCount++] = Invoke-Command -Session $session -ScriptBlock $remoteScript -AsJob -ArgumentList `
-                $taskContext.TaskName,`
-                $taskContext.Application,`
-                $taskContext.Version,`
-                $server.DeploymentGroup,`
-                (,$script)
+            $jobs[$jobCount++] = Invoke-Command -Session $session -ScriptBlock $remoteScript -AsJob -ArgumentList $scriptContext,(,$script)
         }
     }
 
@@ -574,11 +592,11 @@ function Add-TaskScriptToServers($taskContext, $task)
     # iterate through all environment servers and see if the task applies
     foreach($server in $taskContext.Environment.Servers.values)
     {
-        $applied = $false
+        $applicable = $false
         if($task.DeploymentGroup -eq $null -or $server.DeploymentGroup -eq $null)
         {
-            # task is applied to all groups
-            $applied = $true
+            # task is applicable to all groups
+            $applicable = $true
         }
         else
         {
@@ -587,11 +605,11 @@ function Add-TaskScriptToServers($taskContext, $task)
 
             if($commonGroups.length -gt 0)
             {
-                $applied = $true
+                $applicable = $true
             }
         }
 
-        if($applied)
+        if($applicable)
         {
             # add task script to the array of server scripts
             $serverScripts = $taskContext.ServerScripts[$server.ServerAddress]
@@ -611,27 +629,36 @@ function Add-TaskScriptToServers($taskContext, $task)
     }
 }
 
-function Add-BeforeTasks($taskContext, $beforeTasks)
+function Get-TaskChain($task)
+{
+    $tasks = New-Object System.Collections.ArrayList
+    Add-BeforeTasks $tasks $task.BeforeTasks
+    $tasks.Add($task) > $null
+    Add-AfterTasks $tasks $task.AfterTasks
+    return $tasks
+}
+
+function Add-BeforeTasks($tasks, $beforeTasks)
 {
     foreach($task in $beforeTasks)
     {
         # add task before tasks
-        Add-BeforeTasks $taskContext $task.BeforeTasks
+        Add-BeforeTasks $tasks $task.BeforeTasks
         
         # add task itself
-        Add-TaskScriptToServers $taskContext $task
+        $tasks.Add($task) > $null
     }
 }
 
-function Add-AfterTasks($taskContext, $afterTasks)
+function Add-AfterTasks($tasks, $afterTasks)
 {
     foreach($task in $afterTasks)
     {
         # add task itself
-        Add-TaskScriptToServers $taskContext $task
+        $tasks.Add($task) > $null
                 
         # add tasks after
-        Add-AfterTasks $taskContext $task.AfterTasks > $null
+        Add-AfterTasks $tasks $task.AfterTasks
     }
 }
 
@@ -789,32 +816,39 @@ function ValueOrDefault($value, $default)
 #   Init tasks
 #
 # --------------------------------------------
-New-DeploymentTask init {
-    Write-Log "Initializing deployment framework"
+Set-DeploymentTask init {
+    function Write-Log($message)
+    {
+        Write-Output "[$($context.ServerAddress)] $(Get-Date -f g) - $message"
+    }
 }
 
-New-DeploymentTask deploy {
+Set-DeploymentTask deploy {
     Write-Log "Deploying application"
-    Start-Sleep -s 3
+
+    if($context.Application.OnPackageDownload)
+    {
+        $scr = $ExecutionContext.InvokeCommand.NewScriptBlock($context.Application.OnPackageDownload)
+        .$scr
+    }
+
+    Start-Sleep -s 1
 }
 
-New-DeploymentTask remove {
+Set-DeploymentTask remove {
     Write-Log "Removing application"
 }
 
-New-DeploymentTask rollback {
+Set-DeploymentTask rollback {
     Write-Log "Rolling back application to the previous version"
 }
 
-New-DeploymentTask common-functions -Before init {
-    function Write-Log($message)
-    {
-        Write-Output "[$($env:COMPUTERNAME)] $(Get-Date -f g) - $message"
-    }
+Set-DeploymentTask common-functions -On init {
+    Write-Log "Add custom functions..."
 }
 
 Export-ModuleMember -Function `
     Set-DeploymentConfig, `
-    New-Application, Add-WebSiteRole, Add-ServiceRole, New-DeploymentTask, `
+    New-Application, Add-WebSiteRole, Add-ServiceRole, Set-DeploymentTask, `
     New-Environment, Add-EnvironmentServer, `
-    New-Deployment, Remove-Deployment, Restore-Deployment, Restart-Deployment, Stop-Deployment, Start-Deployment
+    Invoke-DeploymentTask, New-Deployment, Remove-Deployment, Restore-Deployment, Restart-Deployment, Stop-Deployment, Start-Deployment
