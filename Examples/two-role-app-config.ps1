@@ -1,5 +1,5 @@
 # import AppRoller
-remove-module AppRoller -ErrorAction SilentlyContinue
+Remove-Module AppRoller -ErrorAction SilentlyContinue
 $currentPath = Split-Path $myinvocation.mycommand.path
 Import-Module (Resolve-Path (Join-Path $currentPath  ..\AppRoller.psm1))
 
@@ -28,9 +28,6 @@ Set-DeploymentConfig taskExecutionTimeout 60 # 1 min
 $myApp = New-Application MyApp -BasePath "$($env:SystemDrive)\apps\myapp" -Variables @{
     "appveyorApiKey" = "key1"
     "appveyorApiSecret" = "secret1"
-} -OnPackageDownload {
-    #Write-Log "Download!!!!"
-    #$context.Application.Variables
 }
 
 # add website role
@@ -73,9 +70,6 @@ Add-EnvironmentServer $staging "test-ps3.cloudapp.net" -Port 5986 -DeploymentGro
 #
 # --------------------------------------------
 
-# perform deployment to staging
-#New-Deployment myapp 1.0.0 -To staging -Verbose #-Serial
-
 Set-DeploymentTask setup:env -Requires setup:web,setup:app -PerGroup -DeploymentGroup app {
     Write-Log "Setup environment for the first time: $($env:COMPUTERNAME)"
 
@@ -96,7 +90,16 @@ Set-DeploymentTask setup:web {
     $a
 }
 
-Invoke-DeploymentTask setup:env -On staging -Verbose
+Set-DeploymentTask appveyor-download -On download-package {
+    Write-Log "Configure appveyor download!"
+    "AppVeyor API key: $($context.Application.Variables["appveyorApiKey"])"
+    "AppVeyor API secret: $($context.Application.Variables["appveyorApiSecret"])"
+}
+
+#Invoke-DeploymentTask setup:env -On staging -Verbose
+
+# perform deployment to staging
+New-Deployment myapp 1.0.0 -To staging -Verbose #-Serial
 
 # remove deployment
 #Remove-Deployment $myapp -From $staging

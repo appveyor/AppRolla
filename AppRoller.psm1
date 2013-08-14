@@ -37,10 +37,7 @@ function New-Application
         $BasePath,
 
         [Parameter(Mandatory=$false)]
-        $Variables = @{},
-
-        [Parameter(Mandatory=$false)]
-        [scriptblock]$OnPackageDownload = $null
+        $Variables = @{}
     )
 
     Write-Verbose "New-Application $Name"
@@ -56,9 +53,7 @@ function New-Application
         Name = $Name
         BasePath = $BasePath
         Variables = $Variables
-        OnPackageDownload = $OnPackageDownload
         Roles = @{}
-        DeploymentTasks = New-Object System.Collections.ArrayList
     }
 
     $currentContext.applications[$Name] = $app
@@ -658,8 +653,10 @@ function Add-RequiredTasks($tasks, $requiredTasks, $filter)
 
         if($task -ne $null -and (IsTaskAppicable $task $filter))
         {
-            # add task before tasks
+            # add required tasks recursively
             Add-RequiredTasks $tasks $task.RequiredTasks $filter
+
+            Add-ApplicableTasks $tasks $task $filter
         
             # add task itself
             $tasks[$taskName] = $task
@@ -910,7 +907,11 @@ Set-DeploymentTask init {
     }
 }
 
-Set-DeploymentTask deploy {
+Set-DeploymentTask download-package {
+    Write-Log "Downloading package"
+}
+
+Set-DeploymentTask deploy -Requires download-package {
     Write-Log "Deploying application"
 
     if($context.Application.OnPackageDownload)
@@ -918,6 +919,8 @@ Set-DeploymentTask deploy {
         $scr = $ExecutionContext.InvokeCommand.NewScriptBlock($context.Application.OnPackageDownload)
         .$scr
     }
+
+    Invoke-DeploymentTask download-package
 
     Start-Sleep -s 1
 }
