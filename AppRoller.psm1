@@ -224,6 +224,9 @@ function Set-DeploymentTask
         $After = $null,
 
         [Parameter(Mandatory=$false)]
+        $Requires = @(),
+
+        [Parameter(Mandatory=$false)]
         $Application = $null,
         
         [Parameter(Mandatory=$false)]
@@ -248,8 +251,9 @@ function Set-DeploymentTask
     $task = @{
         Name = $Name
         Script = $Script
-        BeforeTasks = New-Object System.Collections.ArrayList
-        AfterTasks = New-Object System.Collections.ArrayList
+        BeforeTasks = New-Object System.Collections.Generic.List[string]
+        AfterTasks = New-Object System.Collections.Generic.List[string]
+        RequiredTasks = $Requires
         Application = $Application
         Version = $Version
         DeploymentGroup = $DeploymentGroup
@@ -265,7 +269,7 @@ function Set-DeploymentTask
         $beforeTask = $currentContext.tasks[$Before]
         if($beforeTask -ne $null)
         {
-            $beforeTask.BeforeTasks.Add($task) > $null
+            $beforeTask.BeforeTasks.Add($task.Name) > $null
         }
         else
         {
@@ -278,7 +282,7 @@ function Set-DeploymentTask
         $afterTask = $currentContext.tasks[$After]
         if($afterTask -ne $null)
         {
-            $afterTask.AfterTasks.Add($task) > $null
+            $afterTask.AfterTasks.Add($task.Name) > $null
         }
         else
         {
@@ -293,11 +297,8 @@ function New-Environment
     [CmdletBinding()]
     param
     (
-        [Parameter(ParameterSetName="InCode", Position=0, Mandatory=$true)]
+        [Parameter(Position=0, Mandatory=$true)]
         $Name,
-
-        [Parameter(ParameterSetName="FromFile", Mandatory=$true)]
-        $File,
 
         [Parameter(Mandatory=$false)]
         [PSCredential]$Credential
@@ -308,36 +309,22 @@ function New-Environment
     # create new environment
     $environment = @{
         Name = $Name
+        Credential = $Credential
         Servers = @{}
-    }
-
-    if($PsCmdlet.ParameterSetName -eq "FromFile")
-    {
-        # load environment from file
-        $environment = (Get-Content $File) -join "`n" | ConvertFrom-Json
-
-        # fix server addresses
-        foreach($serverAddress in $environment.Servers.keys)
-        {
-            $server.serverAddress = $serverAddress
-        }
     }
 
     # verify if environment already exists
     if($currentContext.environments[$environment.Name] -eq $null)
     {
         $currentContext.environments[$environment.Name] = $environment
-
-        # save credentials
-        #$environment.Credential = $Credential
-
-        # output to pipeline
-        return $environment
     }
     else
     {
         throw "Environment $Name already exists. Choose a different name."
     }
+
+    # output to pipeline
+    return $environment
 }
 
 function Get-Environment
@@ -442,13 +429,12 @@ function Invoke-DeploymentTask
         Application = $Application
         Version = $Version
         Environment = $Environment
-        ServerScripts = @{}
+        ServerTasks = @{}
         Serial = $Serial
     }
 
     # add main task
     $task = $currentContext.tasks[$taskName]
-
     if($task -eq $null)
     {
         throw "Task $taskName not found"
@@ -465,33 +451,60 @@ function Invoke-DeploymentTask
         }
     }
 
-    $tasks = Get-TaskChain $task
-    foreach($t in $tasks)
+    # setup tasks for each server
+    $perGroupTasks = @{}
+    foreach($server in $taskContext.Environment.Servers.values)
     {
-        Add-TaskScriptToServers $taskContext $t
-    }
+        $serverTasks = @{}
 
-    if($taskContext.ServerScripts.count -eq 0)
-    {
-        throw "No servers will be affected by `"$taskName`" command."
-    }
+        $filter = @{
+            Application = $Application
+            Version = $Version
+            Server = $server
+            PerGroupTasks = $perGroupTasks
+        }
 
-    # add "init" task scripts for each server
-    $initTask = $currentContext.tasks["init"]
-    $tasks = Get-TaskChain $initTask
-    foreach($serverScripts in $taskContext.ServerScripts.values)
-    {
-        $i = 0
-        foreach($t in $tasks)
+        # process main task
+        Add-ApplicableTasks $serverTasks $task $filter
+
+        # filter per-group tasks
+        $keys = $serverTasks.keys | ToArray
+        foreach($name in $keys)
         {
-            $serverScripts.Insert($i++, $t.Script) > $null
+            $t = $serverTasks[$name]
+            if($t.PerGroup -and $perGroupTasks[$name] -eq $null)
+            {
+                # add it to the group tasks
+                $perGroupTasks[$name] = $true
+            }
+            elseif($t.PerGroup -and $perGroupTasks[$name] -ne $null)
+            {
+                # remove it from server tasks
+                $serverTasks.Remove($name)
+            }
+        }
+
+        if($serverTasks.Count -gt 0)
+        {
+            # insert "init" tasks
+            $initTask = $currentContext.tasks["init"]
+            Add-ApplicableTasks $serverTasks $initTask $filter
+
+            # add required tasks
+            Add-RequiredTasks $serverTasks $task.RequiredTasks $filter
+
+            # add to context
+            $taskContext.ServerTasks[$server.ServerAddress] = @{
+                Tasks = $serverTasks
+                Script = @("init", $taskName)
+            }
         }
     }
 
     # run scripts on each server
-    $jobs = @(0) * $taskContext.ServerScripts.count
+    $jobs = @(0) * $taskContext.ServerTasks.count
     $jobCount = 0
-    foreach($serverAddress in $taskContext.ServerScripts.keys)
+    foreach($serverAddress in $taskContext.ServerTasks.keys)
     {
         Write-Verbose "Run script on $($serverAddress) server"
 
@@ -506,7 +519,7 @@ function Invoke-DeploymentTask
         $session = Get-RemoteSession -serverAddress $server.ServerAddress -port $server.Port -credential $credential
 
         # server sequence to run
-        $script = $taskContext.ServerScripts[$serverAddress]
+        $serverTasks = $taskContext.ServerTasks[$serverAddress]
 
         $scriptContext = @{
             TaskName = $taskContext.TaskName
@@ -514,7 +527,10 @@ function Invoke-DeploymentTask
             Version = $taskContext.Version
             ServerAddress = $server.ServerAddress
             ServerDeploymentGroup = $server.DeploymentGroup
+            Tasks = $serverTasks.Tasks
         }
+
+        $script = $serverTasks.Script
 
         $remoteScript = {
             param (
@@ -522,23 +538,53 @@ function Invoke-DeploymentTask
                 $script
             )
 
-            # run script parts one-by-one
-            foreach($scriptBlock in $script)
+            $context.CallStack = New-Object System.Collections.Generic.Stack[string]
+
+            function Invoke-DeploymentTask($taskName)
             {
-                $sb = $ExecutionContext.InvokeCommand.NewScriptBlock($scriptBlock)
-                .$sb
+                Write-Verbose "Invoke task $taskName $($context.Tasks.count)"
+                $task = $context.Tasks[$taskName]
+                if($task -ne $null)
+                {
+                    # push task name to call stack
+                    $context.CallStack.Push($taskName) > $null
+
+                    # run before tasks recursively
+                    foreach($beforeTask in $task.BeforeTasks)
+                    {
+                        Invoke-DeploymentTask $beforeTask
+                    }
+
+                    # run task
+                    .([scriptblock]::Create($task.Script))
+
+                    # run after tasks recursively
+                    foreach($afterTask in $task.AfterTasks)
+                    {
+                        Invoke-DeploymentTask $afterTask
+                    }
+
+                    # pop
+                    $context.CallStack.Pop() > $null
+                }
+            }
+
+            # run script parts one-by-one
+            foreach($taskName in $script)
+            {
+                Invoke-DeploymentTask $taskName
             }
         }
 
         if($taskContext.Serial)
         {
             # run script on remote server synchronously
-            Invoke-Command -Session $session -ScriptBlock $remoteScript -ArgumentList $scriptContext,(,$script)
+            Invoke-Command -Session $session -ScriptBlock $remoteScript -ArgumentList $scriptContext,$script
         }
         else
         {
             # run script on remote server as a job
-            $jobs[$jobCount++] = Invoke-Command -Session $session -ScriptBlock $remoteScript -AsJob -ArgumentList $scriptContext,(,$script)
+            $jobs[$jobCount++] = Invoke-Command -Session $session -ScriptBlock $remoteScript -AsJob -ArgumentList $scriptContext,$script
         }
     }
 
@@ -558,96 +604,104 @@ function Invoke-DeploymentTask
     Remove-RemoteSessions
 }
 
-function Add-TaskScriptToServers($taskContext, $task)
+function Add-ApplicableTasks($tasks, $task, $filter)
+{
+    if((IsTaskAppicable $task $filter))
+    {
+        # before tasks recursively
+        Add-BeforeTasks $tasks $task.BeforeTasks $filter
+
+        $tasks[$task.Name] = $task
+
+        # after tasks recursively
+        Add-AfterTasks $tasks $task.AfterTasks $filter
+    }
+}
+
+function Add-BeforeTasks($tasks, $beforeTasks, $filter)
+{
+    foreach($taskName in $beforeTasks)
+    {
+        $task = $currentContext.tasks[$taskName]
+        if($task -ne $null -and (IsTaskAppicable $task $filter))
+        {
+            # add task before tasks
+            Add-BeforeTasks $tasks $task.BeforeTasks $filter
+        
+            # add task itself
+            $tasks[$taskName] = $task
+        }
+    }
+}
+
+function Add-AfterTasks($tasks, $afterTasks, $filter)
+{
+    foreach($taskName in $afterTasks)
+    {
+        $task = $currentContext.tasks[$taskName]
+        if($task -ne $null -and (IsTaskAppicable $task $filter))
+        {
+            # add task itself
+            $tasks[$taskName] = $task
+                
+            # add tasks after
+            Add-AfterTasks $tasks $task.AfterTasks $filter
+        }
+    }
+}
+
+function Add-RequiredTasks($tasks, $requiredTasks, $filter)
+{
+    foreach($taskName in $requiredTasks)
+    {
+        $task = $currentContext.tasks[$taskName]
+
+        if($task -ne $null -and (IsTaskAppicable $task $filter))
+        {
+            # add task before tasks
+            Add-RequiredTasks $tasks $task.RequiredTasks $filter
+        
+            # add task itself
+            $tasks[$taskName] = $task
+        }
+    }
+}
+
+function IsTaskAppicable($task, $filter)
 {
     # filter by application name and version
-    if($task.Application -ne $null -and $task.Application -ne $taskContext.Application.Name)
+    if($task.Application -ne $null -and $task.Application -ne $filter.Application.Name)
     {
         # task application name is specified but does not match
-        return
+        return $false
     }
     else
     {
         # OK, application name does match, check version now if specified
-        if($task.Version -ne $null -and $task.Version -ne $taskContext.Version)
+        if($task.Version -ne $null -and $task.Version -ne $filter.Version)
         {
             # version is specified but does not match
-            Write-Output "App version does not match!!!!"
-            return
+            return $false
         }
     }
 
-    # iterate through all environment servers and see if the task applies
-    foreach($server in $taskContext.Environment.Servers.values)
+    if($task.DeploymentGroup -eq $null -or $filter.Server.DeploymentGroup -eq $null)
     {
-        $applicable = $false
-        if($task.DeploymentGroup -eq $null -or $server.DeploymentGroup -eq $null)
-        {
-            # task is applicable to all groups
-            $applicable = $true
-        }
-        else
-        {
-            # find intersection of two arrays of DeploymentGroup
-            $commonGroups = $task.DeploymentGroup | ?{$server.DeploymentGroup -contains $_}
-
-            if($commonGroups.length -gt 0)
-            {
-                $applicable = $true
-            }
-        }
-
-        if($applicable)
-        {
-            # add task script to the array of server scripts
-            $serverScripts = $taskContext.ServerScripts[$server.ServerAddress]
-            if($serverScripts -eq $null)
-            {
-                $serverScripts = New-Object System.Collections.ArrayList
-                $taskContext.ServerScripts[$server.ServerAddress] = $serverScripts
-            }
-            $serverScripts.Add($task.Script) > $null
-
-            # is it per group task
-            if($task.PerGroup)
-            {
-                break
-            }
-        }
+        # task is applicable to all groups
+        return $true
     }
-}
-
-function Get-TaskChain($task)
-{
-    $tasks = New-Object System.Collections.ArrayList
-    Add-BeforeTasks $tasks $task.BeforeTasks
-    $tasks.Add($task) > $null
-    Add-AfterTasks $tasks $task.AfterTasks
-    return $tasks
-}
-
-function Add-BeforeTasks($tasks, $beforeTasks)
-{
-    foreach($task in $beforeTasks)
+    else
     {
-        # add task before tasks
-        Add-BeforeTasks $tasks $task.BeforeTasks
-        
-        # add task itself
-        $tasks.Add($task) > $null
-    }
-}
+        # find intersection of two arrays of DeploymentGroup
+        $commonGroups = $task.DeploymentGroup | ?{$filter.Server.DeploymentGroup -contains $_}
 
-function Add-AfterTasks($tasks, $afterTasks)
-{
-    foreach($task in $afterTasks)
-    {
-        # add task itself
-        $tasks.Add($task) > $null
-                
-        # add tasks after
-        Add-AfterTasks $tasks $task.AfterTasks
+        if($commonGroups.length -gt 0)
+        {
+            return $true
+        }
     }
+
+    return $false
 }
 
 function New-Deployment
@@ -820,15 +874,39 @@ function ValueOrDefault($value, $default)
     return $default
 }
 
+function ToArray
+{
+    begin
+    {
+        $output = @(); 
+    }
+    process
+    {
+        $output += $_; 
+    }
+    end
+    {
+        return ,$output; 
+    }
+}
+
 # --------------------------------------------
 #
 #   Init tasks
 #
 # --------------------------------------------
 Set-DeploymentTask init {
-    function Write-Log($message)
-    {
-        Write-Output "[$($context.ServerAddress)] $(Get-Date -f g) - $message"
+    
+    $m = New-Module -Name "CommonFunctions" -ScriptBlock {
+        function Write-Log($message)
+        {
+            $callStack = $context.CallStack.ToArray()
+            [array]::Reverse($callStack)
+            $taskName = $callStack -join "]["
+            Write-Output "[$($context.ServerAddress)][$taskName] $(Get-Date -f g) - $message"
+        }
+
+        Export-ModuleMember -Function Write-Log
     }
 }
 
@@ -852,7 +930,7 @@ Set-DeploymentTask rollback {
     Write-Log "Rolling back application to the previous version"
 }
 
-Set-DeploymentTask common-functions -On init {
+Set-DeploymentTask functions -On init {
     Write-Log "Add custom functions..."
 }
 

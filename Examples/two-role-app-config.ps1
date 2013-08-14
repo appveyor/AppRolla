@@ -59,16 +59,13 @@ Set-DeploymentTask task3 -After rollback -Application $applicationName -Version 
 }
 
 # describe Staging environment
-<#
 $staging = New-Environment -Name Staging -Credential $credential
-Add-EnvironmentServer $staging "test-ps2.cloudapp.net" -Port 51281 -DeploymentGroup web
+Add-EnvironmentServer $staging "test-ps2.cloudapp.net" -Port 51281 -DeploymentGroup web,app
 Add-EnvironmentServer $staging "test-ps1.cloudapp.net" -Port 5986 -DeploymentGroup app `
     -Credential (New-Object System.Management.Automation.PSCredential "appveyor", $securePassword)
 Add-EnvironmentServer $staging "test-ps3.cloudapp.net" -Port 5986 -DeploymentGroup app
-#>
-$staging = New-Environment -File (Join-Path $currentPath staging.json) -Credential $credential
 
-$staging
+#$staging = New-Environment -File (Join-Path $currentPath staging.json) -Credential $credential
 
 # --------------------------------------------
 #
@@ -77,10 +74,26 @@ $staging
 # --------------------------------------------
 
 # perform deployment to staging
-New-Deployment myapp 1.0.0 -To staging -Verbose #-Serial
+#New-Deployment myapp 1.0.0 -To staging -Verbose #-Serial
 
-Set-DeploymentTask setup:env -DeploymentGroup app {
+Set-DeploymentTask setup:env -Requires setup:web,setup:app -PerGroup -DeploymentGroup app {
     Write-Log "Setup environment for the first time: $($env:COMPUTERNAME)"
+
+    $a = 42
+    function Test()
+    {
+        Write-Log "Test!!!!"
+    }
+
+    $context.ServerDeploymentGroup
+
+    Invoke-DeploymentTask setup:web
+}
+
+Set-DeploymentTask setup:web {
+    Write-Log "Setup web group only"
+    Test
+    $a
 }
 
 Invoke-DeploymentTask setup:env -On staging -Verbose
