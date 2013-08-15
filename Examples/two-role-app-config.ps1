@@ -50,14 +50,12 @@ Add-ServiceRole $myapp -Name "MyAppService" -DeploymentGroup app `
     }
 
 # add custom deployment task
-Set-DeploymentTask task1 -Before deploy -Application $applicationName -Version 1.0.0 -DeploymentGroup web -PerGroup {
-    Write-Log "task1: do something on ONE of the group nodes of web deployment group before deployment"
-    $a
+Set-DeploymentTask remove-from-lb -Before deploy,restart -Application $myApp.Name {
+    Write-Log "CUSTOM TASK: Remove machine from load balancer"
 }
 
-Set-DeploymentTask task2 -Before task1 {
-    Write-Log "task2: do something on EACH node of every group before appliction deployment"
-    $a = 1
+Set-DeploymentTask add-to-lb -After deploy,restart -Application $myApp.Name {
+    Write-Log "CUSTOM TASK: Add machine to load balancer"
 }
 
 Set-DeploymentTask task3 -After rollback -Application $applicationName -Version 1.2.0 -DeploymentGroup web {
@@ -113,7 +111,7 @@ Set-DeploymentTask setup:web {
 
 #Restore-Deployment myapp -On local
 
-# remove deployment
+
 #Remove-Deployment myapp -From staging
 #Remove-Deployment $myapp -From $staging
 
@@ -121,7 +119,7 @@ Set-DeploymentTask setup:web {
 #Restore-Deployment $myapp -On $staging
 
 
-Restart-Deployment myapp -On local -Serial -Verbose
+Restart-Deployment myapp -On staging -Serial -Verbose
 
 
 #Stop-Deployment myapp -On local

@@ -228,10 +228,10 @@ function Set-DeploymentTask
         [scriptblock]$Script,
 
         [Parameter(Mandatory=$false)]
-        $Before = $null,
+        [string[]]$Before = @(),
         
         [Parameter(Mandatory=$false)][Alias("On")]
-        $After = $null,
+        [string[]]$After = @(),
 
         [Parameter(Mandatory=$false)]
         $Requires = @(),
@@ -274,29 +274,35 @@ function Set-DeploymentTask
     $currentContext.tasks[$Name] = $task
 
     # bind task to others
-    if($Before -ne $null)
+    if($Before)
     {
-        $beforeTask = $currentContext.tasks[$Before]
-        if($beforeTask -ne $null)
+        foreach($beforeTaskName in $Before)
         {
-            $beforeTask.BeforeTasks.Add($task.Name) > $null
-        }
-        else
-        {
-            throw "Wrong before task: $Before"
+            $beforeTask = $currentContext.tasks[$beforeTaskName]
+            if($beforeTask -ne $null)
+            {
+                $beforeTask.BeforeTasks.Add($task.Name) > $null
+            }
+            else
+            {
+                throw "Wrong before task: $Before"
+            }
         }
     }
 
-    if($After -ne $null)
+    if($After)
     {
-        $afterTask = $currentContext.tasks[$After]
-        if($afterTask -ne $null)
+        foreach($afterTaskName in $After)
         {
-            $afterTask.AfterTasks.Add($task.Name) > $null
-        }
-        else
-        {
-            throw "Wrong after task: $After"
+            $afterTask = $currentContext.tasks[$afterTaskName]
+            if($afterTask -ne $null)
+            {
+                $afterTask.AfterTasks.Add($task.Name) > $null
+            }
+            else
+            {
+                throw "Wrong after task: $After"
+            }
         }
     }
 }
@@ -1180,7 +1186,7 @@ To authenticate request set AppVeyor API keys in global deployment configuration
     $webClient.Headers.Add("Authorization", $headerValue)
 }
 
-Set-DeploymentTask set-role-folder {
+Set-DeploymentTask setup-role-folder {
     
     $rootPath = $null
     $basePath = $null
@@ -1235,7 +1241,7 @@ Set-DeploymentTask set-role-folder {
     }
 }
 
-Set-DeploymentTask deploy -Requires set-role-folder,download-package,deploy-website,deploy-service,deploy-console {
+Set-DeploymentTask deploy -Requires setup-role-folder,download-package,deploy-website,deploy-service,deploy-console {
     Write-Log "Deploying application"
 
     # deploy each role separately
@@ -1252,7 +1258,7 @@ Set-DeploymentTask deploy-website {
     Write-Log "Deploying website $($role.Name)"
 
     # determine the location of application folder
-    Invoke-DeploymentTask set-role-folder
+    Invoke-DeploymentTask setup-role-folder
 
     # $role.BasePath - base path for role versions
     # $role.RootPath - role version installation root (application root)
@@ -1297,7 +1303,7 @@ Set-DeploymentTask deploy-service {
     Write-Log "Deploying Windows service $($role.Name)"
 
     # determine the location of application folder
-    Invoke-DeploymentTask set-role-folder
+    Invoke-DeploymentTask setup-role-folder
 
     # $role.BasePath - base path for role versions
     # $role.RootPath - role version installation root (application root)
@@ -1410,7 +1416,7 @@ Set-DeploymentTask deploy-service {
 #
 # --------------------------------------------
 
-Set-DeploymentTask remove -Requires set-role-folder,remove-website,remove-service {
+Set-DeploymentTask remove -Requires setup-role-folder,remove-website,remove-service {
     Write-Log "Removing deployment"
 
     # remove role-by-role
@@ -1431,7 +1437,7 @@ Set-DeploymentTask remove-service {
     Write-Log "Removing Windows service $($role.Name)"
 
     # determine the location of application folder
-    Invoke-DeploymentTask set-role-folder
+    Invoke-DeploymentTask setup-role-folder
 
     # get service details
     $service = Get-WindowsService $role.ServiceName
@@ -1470,7 +1476,10 @@ Set-DeploymentTask remove-service {
 
         # delete role folder recursively
         Write-Log "Deleting application directory $($role.BasePath)"
-        Remove-Item $role.BasePath -Force -Recurse
+        if(Test-Path $role.BasePath)
+        {
+            Remove-Item $role.BasePath -Force -Recurse
+        }
     }
     else
     {
@@ -1490,7 +1499,7 @@ Set-DeploymentTask remove-service {
 #
 # --------------------------------------------
 
-Set-DeploymentTask rollback -Requires set-role-folder,rollback-website,rollback-service {
+Set-DeploymentTask rollback -Requires setup-role-folder,rollback-website,rollback-service {
     Write-Log "Rollback deployment"
 
     # rollback role-by-role
@@ -1511,7 +1520,7 @@ Set-DeploymentTask rollback-service {
     Write-Log "Rollback Windows service $($role.Name)"
 
     # determine the location of application folder
-    Invoke-DeploymentTask set-role-folder
+    Invoke-DeploymentTask setup-role-folder
 
     # check if rollback is possible
     if($role.Versions.length -lt 2)
@@ -1599,7 +1608,7 @@ Set-DeploymentTask rollback-service {
 #
 # --------------------------------------------
 
-Set-DeploymentTask start -Requires set-role-folder,start-website,start-service {
+Set-DeploymentTask start -Requires setup-role-folder,start-website,start-service {
     Write-Log "Start deployment"
 
     # start role-by-role
@@ -1612,7 +1621,7 @@ Set-DeploymentTask start -Requires set-role-folder,start-website,start-service {
     }
 }
 
-Set-DeploymentTask stop -Requires set-role-folder,stop-website,stop-service {
+Set-DeploymentTask stop -Requires setup-role-folder,stop-website,stop-service {
     Write-Log "Stop deployment"
 
     # stop role-by-role
