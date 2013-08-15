@@ -529,6 +529,8 @@ function Invoke-DeploymentTask
         # server sequence to run
         $serverTasks = $taskContext.ServerTasks[$serverAddress]
 
+        $server = $environment.Servers[$serverAddress]
+
         $scriptContext = @{
             Configuration = $config
             TaskName = $taskContext.TaskName
@@ -1250,12 +1252,25 @@ Set-DeploymentTask deploy -Requires setup-role-folder,download-package,deploy-we
         if(Test-RoleApplicableToServer $role)
         {
             Invoke-DeploymentTask "deploy-$($role.Type)"
+
+            # delete previous versions
+            if($role.Versions.length -gt $context.Configuration.KeepPreviousVersions)
+            {
+                for($i = $context.Configuration.KeepPreviousVersions; $i -lt $role.Versions.length; $i++)
+                {
+                    $version = $role.Versions[$i]
+                    Write-Log "Deleting old version $version"
+                    Remove-Item (Join-Path $role.BasePath $version) -Force -Recurse
+                }
+            }
         }
     }
 }
 
 Set-DeploymentTask deploy-website {
     Write-Log "Deploying website $($role.Name)"
+
+    Import-Module WebAdministration
 
     # determine the location of application folder
     Invoke-DeploymentTask setup-role-folder
@@ -1270,33 +1285,103 @@ Set-DeploymentTask deploy-website {
         throw "$($context.Application.Name) $($context.Version) role $($role.Name) deployment already exists."
     }
 
-    # download service package to temp location
-    $packageFile = Get-TempFileName ".zip"
-    Invoke-DeploymentTask download-package
+    try
+    {
+        # create application folder (with version info)
+        Write-Log "Create website folder: $($role.RootPath)"
+        New-Item -ItemType Directory -Force -Path $role.RootPath > $null
 
-    # check if website already exists
+        # download service package to temp location
+        $packageFile = Get-TempFileName ".zip"
+        Invoke-DeploymentTask download-package
 
-        # stop application pool
+        # unzip service package to application folder
+        Expand-Zip $packageFile $role.RootPath
 
-    # create application folder (with version info)
+        # update web.config
+        $webConfigPath = Join-Path $role.RootPath "web.config"
+        if(Test-Path $webConfigPath)
+        {
+            Write-Log "Updating web.config in $appConfigPath"
+            Update-ApplicationConfig -configPath $webConfigPath -variables $role.Configuration
+        }
 
-    # unzip service package to application folder
+        $appPoolName = $role.WebsiteName
+        $appPoolIdentityName = "IIS APPPOOL\$appPoolName"
 
-    # update web.config
+        $website = Get-Item "IIS:\Sites\$($role.WebsiteName)" -EA 0
+        if ($website -ne $null)
+        {
+            Write-Log "Website `"$($role.WebsiteName)`" already exists"
 
-    # if website does not exist
-        
-        # create application pool
+            $appPoolName = $website.applicationPool
 
-        # create web site
+            # get app pool details
+            $appPool = Get-Item "IIS:\AppPools\$appPoolName" -EA 0
 
-    # else
+            # determine pool identity
+            switch($appPool.processModel.identityType)
+            {
+                ApplicationPoolIdentity { $appPoolIdentityName = "IIS APPPOOL\$appPoolName" }
+                NetworkService { $appPoolIdentityName = "NETWORK SERVICE" }
+                SpecificUser { $appPoolIdentityName = $appPool.processModel.userName }
+            }
 
-        # update website root folder
+            # stop application pool
+            Write-Log "Stopping website application pool..."
+            Stop-WebAppPool $website.applicationPool
 
-        # start application pool
+	        # wait 2 sec before continue
+	        Start-Sleep -s 2
+        }
 
-    # cleanup
+        Write-Log "Application pool name: $appPoolName"
+        Write-Log "Application pool identity: $appPoolIdentityName"
+
+        # create website if required
+        if(-not $website)
+        {
+            # create application pool
+            Write-Log "Creating IIS application pool `"$appPoolName`""
+            $webAppPool = New-WebAppPool -Name $appPoolName -Force
+            $WebAppPool.processModel.identityType = "ApplicationPoolIdentity"
+            $WebAppPool | Set-Item
+
+            Write-Log "Granting `"Read`" permissions to application pool identity on application folder"
+            icacls $role.RootPath /grant "IIS APPPOOL\$($appPoolName):(OI)(CI)(R)" > $null
+
+            # create website
+            New-Item "IIS:\Sites\$($role.WebsiteName)" -Bindings @{protocol="$($role.WebsiteProtocol)";bindingInformation="$($role.WebsiteIP):$($role.WebsitePort):$($role.WebsiteHost)"} `
+                -PhysicalPath $role.RootPath -ApplicationPool $appPoolName > $null
+        }
+        else
+        {
+            Write-Log "Granting `"Read`" permissions to application pool identity on application folder"
+            icacls $role.RootPath /grant "IIS APPPOOL\$($appPoolName):(OI)(CI)(R)" > $null
+
+            # update website root folder
+            Set-ItemProperty "IIS:\Sites\$($role.WebsiteName)" -Name physicalPath -Value $role.RootPath
+
+            # start application pool
+            Write-Log "Starting application pool..."
+            Start-WebAppPool $appPoolName
+        }
+    }
+    catch
+    {
+        # delete new application folder
+        if(Test-Path $role.RootPath)
+        {
+            Remove-Item $role.RootPath -Force -Recurse
+        }
+        throw
+    }
+    finally
+    {
+        # cleanup
+        Write-Log "Cleanup..."
+        Remove-Item $packageFile -Force
+    }
 }
 
 Set-DeploymentTask deploy-service {
@@ -1380,17 +1465,6 @@ Set-DeploymentTask deploy-service {
         # start service
         Write-Log "Starting service..."
         Start-Service -Name $role.ServiceName
-
-        # delete previous versions
-        if($role.Versions.length -gt $context.Configuration.KeepPreviousVersions)
-        {
-            for($i = $context.Configuration.KeepPreviousVersions; $i -lt $role.Versions.length; $i++)
-            {
-                $version = $role.Versions[$i]
-                Write-Log "Deleting old version $version"
-                Remove-Item (Join-Path $role.BasePath $version) -Force -Recurse
-            }
-        }
     }
     catch
     {
@@ -1431,6 +1505,71 @@ Set-DeploymentTask remove -Requires setup-role-folder,remove-website,remove-serv
 
 Set-DeploymentTask remove-website {
     Write-Log "Removing website $($role.Name)"
+
+    Import-Module WebAdministration
+
+    # determine the location of application folder
+    Invoke-DeploymentTask setup-role-folder
+
+    # get website details
+    $website = Get-Item "IIS:\Sites\$($role.WebsiteName)" -EA 0
+    if ($website -ne $null)
+    {
+        Write-Log "Website `"$($role.WebsiteName)`" found"
+
+        $siteRoot = $website.physicalPath
+
+        # make sure we are not trying to delete active version
+        $currentVersion = Get-VersionFromDirectory $siteRoot
+
+        if($currentVersion -eq $context.Version)
+        {
+            throw "Active version $version cannot be removed. Specify previous version to remove or ommit -Version parameter to completely delete application."
+        }
+    }
+
+    if(-not $context.Version)
+    {
+        # delete entire deployment
+        Write-Log "Deleting all website deployments"
+
+        if($website -ne $null)
+        {
+            $appPoolName = $website.applicationPool
+
+            # stop application pool
+            Write-Log "Stopping application pool $appPoolName..."
+            Stop-WebAppPool $appPoolName
+
+	        # wait 2 sec before continue
+	        Start-Sleep -s 2
+
+            # delete website
+            Write-Log "Deleting website $($role.WebsiteName)"
+            Remove-Website $role.WebsiteName
+
+            # delete application pool
+            Write-Log "Deleting application pool $appPoolName"
+            Remove-WebAppPool $appPoolName
+        }
+
+        # delete role folder recursively
+        Write-Log "Deleting application directory $($role.BasePath)"
+        if(Test-Path $role.BasePath)
+        {
+            Remove-Item $role.BasePath -Force -Recurse
+        }
+    }
+    else
+    {
+        # delete specific version
+        if(Test-Path $role.RootPath)
+        {
+            Write-Log "Deleting deployment directory $($role.RootPath)"
+            Remove-Item $role.RootPath -Force -Recurse
+        }
+    }
+
 }
 
 Set-DeploymentTask remove-service {
@@ -1513,11 +1652,7 @@ Set-DeploymentTask rollback -Requires setup-role-folder,rollback-website,rollbac
 }
 
 Set-DeploymentTask rollback-website {
-    Write-Log "Rollback website $($role.Name)"
-}
-
-Set-DeploymentTask rollback-service {
-    Write-Log "Rollback Windows service $($role.Name)"
+    Import-Module WebAdministration
 
     # determine the location of application folder
     Invoke-DeploymentTask setup-role-folder
@@ -1528,11 +1663,21 @@ Set-DeploymentTask rollback-service {
         throw "There are no previous versions to rollback to."
     }
 
+    # current version
     $currentVersion = $role.Versions[0]
+    $currentPath = Join-Path $role.BasePath $currentVersion
 
-    # if version is not specified we rollback to the previous version
-    $rollbackVersion = $role.Versions[1]
-    $rollbackPath = Join-Path $role.BasePath $rollbackVersion
+    # get website details to determine actual current version
+    $website = Get-Item "IIS:\Sites\$($role.WebsiteName)" -EA 0
+    if ($website -ne $null)
+    {
+        $currentPath = $website.physicalPath
+        $currentVersion = Get-VersionFromDirectory $currentPath
+    }
+
+    # rollback version
+    $rollbackVersion = $null
+    $rollbackPath = $null
 
     # is that a specific version we want to rollback to?
     if($context.Version)
@@ -1553,11 +1698,125 @@ Set-DeploymentTask rollback-service {
             throw "Version $($context.Version) not found."
         }
     }
+    else
+    {
+        # determine rollback version
+        # rollback version must be next after the current one
+        for($i = 0; $i -lt $role.Versions.length; $i++)
+        {
+            # find current version and make sure it's not the last one in the list
+            if($role.Versions[$i] -eq $currentVersion -and $i -ne ($role.Versions.length - 1))
+            {
+                $rollbackVersion = $role.Versions[$i+1]
+                $rollbackPath = Join-Path $role.BasePath $rollbackVersion
+                break
+            }
+        }
 
-    Write-Log "Rollback service to $rollbackVersion"
+        if(-not $rollbackVersion)
+        {
+            throw "Cannot rollback to the previous version because the active $currentVersion is the last one."
+        }
+    }
 
-    # check if the service already exists
+    # start rollback
+    Write-Log "Rollback website $($role.Name) to version $rollbackVersion"
+
+    # stop website if it exists
+    if ($website -ne $null)
+    {
+        # stop application pool
+        Write-Log "Stopping application pool..."
+        Stop-WebAppPool $website.applicationPool
+
+	    # wait 2 sec before continue
+	    Start-Sleep -s 2
+
+        # change website root folder
+        Write-Log "Update website root folder to $rollbackPath"
+        Set-ItemProperty "IIS:\Sites\$($role.WebsiteName)" -Name physicalPath -Value $rollbackPath
+
+        # start application pool
+        Write-Log "Starting application pool..."
+        Start-WebAppPool $website.applicationPool
+    }
+
+    # delete current version
+    Write-Log "Deleting current version $currentVersion at $currentPath"
+    Remove-Item (Join-Path $role.BasePath $currentVersion) -Force -Recurse
+}
+
+Set-DeploymentTask rollback-service {
+    
+    # determine the location of application folder
+    Invoke-DeploymentTask setup-role-folder
+
+    # check if rollback is possible
+    if($role.Versions.length -lt 2)
+    {
+        throw "There are no previous versions to rollback to."
+    }
+
+    # current version
+    $currentVersion = $role.Versions[0]
+    $currentPath = Join-Path $role.BasePath $currentVersion
+
+    # get service details to determine actual current version
     $service = Get-WindowsService $role.ServiceName
+    if ($service -ne $null)
+    {
+        $currentPath = Split-Path $service.PathName
+        $currentVersion = Get-VersionFromDirectory $currentPath
+    }
+
+    # rollback version
+    $rollbackVersion = $null
+    $rollbackPath = $null
+
+    # is that a specific version we want to rollback to?
+    if($context.Version)
+    {
+        # make sure we don't rollback to active version
+        if($context.Version -eq $currentVersion)
+        {
+            throw "Cannot rollback to the currently deployed version $currentVersion"
+        }
+
+        if(Test-Path $role.RootPath)
+        {
+            $rollbackVersion = $context.Version
+            $rollbackPath = $role.RootPath
+        }
+        else
+        {
+            throw "Version $($context.Version) not found."
+        }
+    }
+    else
+    {
+        # determine rollback version
+        # rollback version must be next after the current one
+        for($i = 0; $i -lt $role.Versions.length; $i++)
+        {
+            # find current version and make sure it's not the last one in the list
+            if($role.Versions[$i] -eq $currentVersion -and $i -ne ($role.Versions.length - 1))
+            {
+                $rollbackVersion = $role.Versions[$i+1]
+                $rollbackPath = Join-Path $role.BasePath $rollbackVersion
+                break
+            }
+        }
+
+        if(-not $rollbackVersion)
+        {
+            throw "Cannot rollback to the previous version because the active $currentVersion is the last one."
+        }
+    }
+
+    # start rollback
+    Write-Log "Rollback Windows service $($role.Name) to version $rollbackVersion"
+
+    # stop service if exists
     if ($service -ne $null)
     {
         Write-Log "Service already exists, stopping..."
@@ -1598,6 +1857,7 @@ Set-DeploymentTask rollback-service {
     Start-Service -Name $role.ServiceName
 
     # delete current version
+    Write-Log "Deleting current version $currentVersion at $currentPath"
     Remove-Item (Join-Path $role.BasePath $currentVersion) -Force -Recurse
 }
 
@@ -1636,10 +1896,39 @@ Set-DeploymentTask stop -Requires setup-role-folder,stop-website,stop-service {
 
 Set-DeploymentTask start-website {
     Write-Log "Start website $($role.Name)"
+
+    Import-Module WebAdministration
+
+    $website = Get-Item "IIS:\Sites\$($role.WebsiteName)" -EA 0
+    if ($website -ne $null)
+    {
+        $appPoolName = $website.applicationPool
+        Write-Log "Starting application pool $appPoolName..."
+        Start-WebAppPool $appPoolName
+        Write-Log "Application pool started"
+    }
 }
 
 Set-DeploymentTask stop-website {
     Write-Log "Stop website $($role.Name)"
+
+    Import-Module WebAdministration
+
+    $website = Get-Item "IIS:\Sites\$($role.WebsiteName)" -EA 0
+    if ($website -ne $null)
+    {
+        $appPoolName = $website.applicationPool
+        if((Get-WebAppPoolState $appPoolName).Value -ne "Stopped")
+        {
+            Write-Log "Stopping application pool $appPoolName..."
+            Stop-WebAppPool $appPoolName
+            Write-Log "Application pool stopped"
+        }
+        else
+        {
+            Write-Log "Application pool `"$appPoolName`" is already stopped"
+        }
+    }
 }
 
 Set-DeploymentTask start-service {
@@ -1648,10 +1937,7 @@ Set-DeploymentTask start-service {
     if ($service -ne $null)
     {
         Write-Log "Starting Windows service $($role.ServiceName)..."
-
-        # start the service
         Start-Service -Name $role.ServiceName
-
         Write-Log "Service started"
     }
 }
@@ -1662,10 +1948,7 @@ Set-DeploymentTask stop-service {
     if ($service -ne $null)
     {
         Write-Log "Stopping Windows service $($role.ServiceName)..."
-
-        # stop the service
         Stop-Service -Name $role.ServiceName -Force
-
         Write-Log "Service stopped"
     }
 }

@@ -38,6 +38,8 @@ $myApp = New-Application MyApp -Configuration @{
 
 # add website role
 Add-WebSiteRole $myapp -Name "MyAppWebsite" -DeploymentGroup web `
+    -WebsiteName "test deploy" `
+    -WebsitePort 8333 `
     -PackageUrl (Get-AppVeyorPackageUrl $applicationName $applicationVersion "HelloAppVeyor.Web") `
     -BasePath "c:\websites\$applicationName"
 
@@ -105,25 +107,32 @@ Set-DeploymentTask setup:web {
 #Invoke-DeploymentTask setup:env -On staging -Verbose
 
 # perform deployment to staging
+#New-Deployment myapp 1.0.0 -To staging -Verbose #-Serial
 #New-Deployment myapp 1.0.1 -To staging -Verbose #-Serial
-#New-Deployment myapp 1.0.7 -To local -Verbose -Serial
-#Remove-Deployment myapp -From local -Verbose -Serial
+#New-Deployment myapp 1.0.2 -To staging -Verbose #-Serial
+#New-Deployment myapp 1.0.3 -To staging -Verbose #-Serial
+
+#New-Deployment myapp 1.0.0 -To local -Verbose -Serial
+
+#Remove-Deployment myapp -From staging -Verbose -Serial
 
 #Restore-Deployment myapp -On local
-
+#Restore-Deployment myapp -On staging
 
 #Remove-Deployment myapp -From staging
 #Remove-Deployment $myapp -From $staging
 
-# rollback deployment
-#Restore-Deployment $myapp -On $staging
 
+#Restore-Deployment myapp -On staging -Verbose -Serial
 
-Restart-Deployment myapp -On staging -Serial -Verbose
+#Restart-Deployment myapp -On staging -Serial -Verbose
 
 
 #Stop-Deployment myapp -On local
+#Stop-Deployment myapp -On staging
 #Start-Deployment myapp -On local
+
+Start-Deployment myapp -On staging
 
 # start deployment
 #Start-Deployment $myapp -On $staging
