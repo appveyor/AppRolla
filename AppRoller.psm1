@@ -518,7 +518,7 @@ function Invoke-DeploymentTask
         # get server remote session
         $server = $taskContext.Environment.Servers[$serverAddress]
         $credential = $server.Credential
-        if($credential -eq $null)
+        if(-not $credential)
         {
             $credential = $taskContext.Environment.Credential
         }
@@ -878,9 +878,21 @@ function Get-RemoteSession
         $skipCACheck = $config.SkipCACheck
         $skipCNCheck = $config.SkipCNCheck
 
+        $options = New-PSSessionOption -SkipCACheck:$skipCACheck -SkipCNCheck:$skipCNCheck
+
         # start new session
-        $session = New-PSSession -ComputerName $serverAddress -Port $port -Credential $credential `
-            -UseSSL:$useSSL -SessionOption (New-PSSessionOption -SkipCACheck:$skipCACheck -SkipCNCheck:$skipCNCheck)
+        if($credential)
+        {
+            # connect with credentials
+            $session = New-PSSession -ComputerName $serverAddress -Port $port -Credential $credential `
+                -UseSSL:$useSSL -SessionOption $options
+        }
+        else
+        {
+            # connect without credentials
+            $session = New-PSSession -ComputerName $serverAddress -Port $port `
+                -UseSSL:$useSSL -SessionOption $options
+        }
 
         # store it in a cache
         $currentContext.remoteSessions[$serverAddress] = $session

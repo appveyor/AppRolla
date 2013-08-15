@@ -65,13 +65,12 @@ Set-DeploymentTask task3 -After rollback -Application $applicationName -Version 
 }
 
 # describe Staging environment
-$staging = New-Environment -Name Staging -Credential $credential -Configuration @{
+$staging = New-Environment -Name Staging -Configuration @{
     var1 = "value1"
     var2 = "value2"
 }
 Add-EnvironmentServer $staging "test-ps2.cloudapp.net" -Port 51281 -DeploymentGroup web,app
-Add-EnvironmentServer $staging "test-ps1.cloudapp.net" -DeploymentGroup app `
-    -Credential (New-Object System.Management.Automation.PSCredential "appveyor", $securePassword)
+Add-EnvironmentServer $staging "test-ps1.cloudapp.net" -DeploymentGroup app
 Add-EnvironmentServer $staging "test-ps3.cloudapp.net" -DeploymentGroup app
 
 #$staging = New-Environment -File (Join-Path $currentPath staging.json) -Credential $credential
