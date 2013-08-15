@@ -1,7 +1,12 @@
 # config
 $config = @{}
-$config.taskExecutionTimeout = 300 # 5 min
-$config.applicationsPath = "c:\applications"
+$config.TaskExecutionTimeout = 300 # 5 min
+$config.ApplicationsPath = "c:\applications"
+
+# connection defaults
+$config.UseSSL = $true
+$config.SkipCACheck = $true
+$config.SkipCNCheck = $true
 
 # context
 $script:context = @{}
@@ -869,9 +874,13 @@ function Get-RemoteSession
     {
         Write-Verbose "Connecting to $($serverAddress) port $port"
 
+        $useSSL = $config.UseSSL
+        $skipCACheck = $config.SkipCACheck
+        $skipCNCheck = $config.SkipCNCheck
+
         # start new session
         $session = New-PSSession -ComputerName $serverAddress -Port $port -Credential $credential `
-            -UseSSL -SessionOption (New-PSSessionOption -SkipCACheck -SkipCNCheck)
+            -UseSSL:$useSSL -SessionOption (New-PSSessionOption -SkipCACheck:$skipCACheck -SkipCNCheck:$skipCNCheck)
 
         # store it in a cache
         $currentContext.remoteSessions[$serverAddress] = $session
@@ -885,7 +894,11 @@ function Remove-RemoteSessions
     foreach($session in $currentContext.remoteSessions.values)
     {
         Write-Verbose "Closing remote session to $($session.ComputerName)"
-        Remove-PSSession -Session $session
+        
+        if($session)
+        {
+            Remove-PSSession -Session $session
+        }
     }
 
     $currentContext.remoteSessions.Clear()
@@ -929,7 +942,7 @@ Set-DeploymentTask init {
         {
             $callStack = $context.CallStack.ToArray()
             [array]::Reverse($callStack)
-            $taskName = $callStack -join "]["
+            $taskName = $callStack -join ":"
             Write-Output "[$($context.Server.ServerAddress)][$taskName] $(Get-Date -f g) - $message"
         }
 
@@ -1213,6 +1226,10 @@ Set-DeploymentTask deploy-service {
 
     # determine the location of application folder
     Invoke-DeploymentTask set-role-folder
+
+    # $role.BasePath - base path for role versions
+    # $role.RootPath - role version installation root (application root)
+    # $role.Versions - the list of installed versions (latest first)
 
     # ... and make sure the folder does not exists
     if(Test-Path $role.RootPath)

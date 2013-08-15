@@ -14,10 +14,15 @@ $securePassword = ConvertTo-SecureString $adminPassword -AsPlainText -Force
 $credential = New-Object System.Management.Automation.PSCredential $adminUsername, $securePassword
 
 # set global deployment configuration
-#Set-DeploymentConfig applicationsFolder "$($env:SystemDrive)\applications"
-Set-DeploymentConfiguration taskExecutionTimeout 60 # 1 min
-Set-DeploymentConfiguration appveyorApiKey $secureData.appveyorApiKey
-Set-DeploymentConfiguration appveyorApiSecret $secureData.appveyorApiSecret
+Set-DeploymentConfiguration TaskExecutionTimeout 60 # 1 min
+
+#Set-DeploymentConfiguration UseSSL $false
+#Set-DeploymentConfiguration SkipCACheck $false
+#Set-DeploymentConfiguration SkipCNCheck $false
+
+# AppVeyor API keys for downloading application artifacts
+Set-DeploymentConfiguration AppveyorApiKey $secureData.appveyorApiKey
+Set-DeploymentConfiguration AppveyorApiSecret $secureData.appveyorApiSecret
 
 
 # --------------------------------------------
@@ -65,9 +70,9 @@ $staging = New-Environment -Name Staging -Credential $credential -Configuration 
     var2 = "value2"
 }
 Add-EnvironmentServer $staging "test-ps2.cloudapp.net" -Port 51281 -DeploymentGroup web,app
-Add-EnvironmentServer $staging "test-ps1.cloudapp.net" -Port 5986 -DeploymentGroup app `
+Add-EnvironmentServer $staging "test-ps1.cloudapp.net" -DeploymentGroup app `
     -Credential (New-Object System.Management.Automation.PSCredential "appveyor", $securePassword)
-Add-EnvironmentServer $staging "test-ps3.cloudapp.net" -Port 5986 -DeploymentGroup app
+Add-EnvironmentServer $staging "test-ps3.cloudapp.net" -DeploymentGroup app
 
 #$staging = New-Environment -File (Join-Path $currentPath staging.json) -Credential $credential
 
