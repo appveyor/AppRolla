@@ -513,18 +513,6 @@ function Invoke-DeploymentTask
     $jobCount = 0
     foreach($serverAddress in $taskContext.ServerTasks.keys)
     {
-        Write-Verbose "Run script on $($serverAddress) server"
-
-        # get server remote session
-        $server = $taskContext.Environment.Servers[$serverAddress]
-        $credential = $server.Credential
-        if(-not $credential)
-        {
-            $credential = $taskContext.Environment.Credential
-        }
-
-        $session = Get-RemoteSession -serverAddress $server.ServerAddress -port $server.Port -credential $credential
-
         # server sequence to run
         $serverTasks = $taskContext.ServerTasks[$serverAddress]
 
@@ -545,22 +533,30 @@ function Invoke-DeploymentTask
 
         $script = $serverTasks.Script
 
-        $remoteScript = {
+        $deployScript = {
             param (
                 $context,
                 $script
             )
 
-            $context.CallStack = New-Object System.Collections.Generic.Stack[string]
+            $callStack = New-Object System.Collections.Generic.Stack[string]
+
+            function Write-Log($message)
+            {
+                $stack = $callStack.ToArray()
+                [array]::Reverse($stack)
+                $taskName = $stack -join ":"
+                Write-Output "[$($context.Server.ServerAddress)][$taskName] $(Get-Date -f g) - $message"
+            }
 
             function Invoke-DeploymentTask($taskName)
             {
-                Write-Verbose "Invoke task $taskName $($context.Tasks.count)"
+                Write-Verbose "Invoke task $taskName"
                 $task = $context.Tasks[$taskName]
                 if($task -ne $null)
                 {
                     # push task name to call stack
-                    $context.CallStack.Push($taskName) > $null
+                    $callStack.Push($taskName) > $null
 
                     # run before tasks recursively
                     foreach($beforeTask in $task.BeforeTasks)
@@ -578,7 +574,7 @@ function Invoke-DeploymentTask
                     }
 
                     # pop
-                    $context.CallStack.Pop() > $null
+                    $callStack.Pop() > $null
                 }
             }
 
@@ -589,15 +585,47 @@ function Invoke-DeploymentTask
             }
         }
 
-        if($taskContext.Serial)
+        if(IsLocalhost $server.ServerAddress)
         {
-            # run script on remote server synchronously
-            Invoke-Command -Session $session -ScriptBlock $remoteScript -ArgumentList $scriptContext,$script
+            # run script locally
+            if($taskContext.Serial)
+            {
+                # run script synchronously
+                Write-Verbose "Running script synchronously on localhost"
+                Invoke-Command -ScriptBlock $deployScript -ArgumentList $scriptContext,$script 
+            }
+            else
+            {
+                # run script as a job
+                Write-Verbose "Run script in parallel on localhost"
+                $jobs[$jobCount++] = Start-Job -ScriptBlock $deployScript -ArgumentList $scriptContext,$script
+            }
         }
         else
         {
-            # run script on remote server as a job
-            $jobs[$jobCount++] = Invoke-Command -Session $session -ScriptBlock $remoteScript -AsJob -ArgumentList $scriptContext,$script
+            # get server remote session
+            $server = $taskContext.Environment.Servers[$serverAddress]
+            $credential = $server.Credential
+            if(-not $credential)
+            {
+                $credential = $taskContext.Environment.Credential
+            }
+
+            $session = Get-RemoteSession -serverAddress $server.ServerAddress -port $server.Port -credential $credential
+
+            # run script on remote machine
+            if($taskContext.Serial)
+            {
+                # run script on remote server synchronously
+                Write-Verbose "Running script synchronously on $($server.ServerAddress)"
+                Invoke-Command -Session $session -ScriptBlock $deployScript -ArgumentList $scriptContext,$script
+            }
+            else
+            {
+                # run script on remote server as a job
+                Write-Verbose "Run script in parallel on $($server.ServerAddress)"
+                $jobs[$jobCount++] = Invoke-Command -Session $session -ScriptBlock $deployScript -AsJob -ArgumentList $scriptContext,$script
+            }
         }
     }
 
@@ -858,6 +886,17 @@ function Get-AppVeyorPackageUrl
 #   Private functions
 #
 # --------------------------------------------
+function IsLocalhost
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true)]
+        [string]$serverAddress
+    )
+
+    return ($serverAddress -eq "localhost" -or $serverAddress -eq "127.0.0.1")
+}
 
 function Get-RemoteSession
 {
@@ -949,14 +988,6 @@ function ToArray
 Set-DeploymentTask init {
     
     $m = New-Module -Name "CommonFunctions" -ScriptBlock {
-        
-        function Write-Log($message)
-        {
-            $callStack = $context.CallStack.ToArray()
-            [array]::Reverse($callStack)
-            $taskName = $callStack -join ":"
-            Write-Output "[$($context.Server.ServerAddress)][$taskName] $(Get-Date -f g) - $message"
-        }
 
         function Expand-Zip
         {
@@ -1026,7 +1057,7 @@ Set-DeploymentTask init {
 
             # find intersection of two arrays of DeploymentGroup
             $commonGroups = $role.DeploymentGroup | ?{$context.Server.DeploymentGroup -contains $_}
-            return ($commonGroups.length -gt 0)
+            return (-not $context.Server.DeploymentGroup -or $commonGroups.length -gt 0)
         }
 
         function Get-TempFileName
@@ -1045,7 +1076,8 @@ Set-DeploymentTask init {
             return [System.IO.Path]::Combine($tempPath, $fileName)
         }
 
-        Export-ModuleMember -Function Write-Log, Expand-Zip, Test-RoleApplicableToServer, Update-ApplicationConfig, Get-TempFileName
+        Export-ModuleMember -Function Push-TaskCallStack, Pop-TaskCallStack, Write-Log, Expand-Zip, Test-RoleApplicableToServer, `
+            Update-ApplicationConfig, Get-TempFileName
     }
 }
 

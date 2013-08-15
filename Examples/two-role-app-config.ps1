@@ -75,6 +75,9 @@ Add-EnvironmentServer $staging "test-ps3.cloudapp.net" -DeploymentGroup app
 
 #$staging = New-Environment -File (Join-Path $currentPath staging.json) -Credential $credential
 
+$local = New-Environment local
+Add-EnvironmentServer $local "localhost"
+
 # --------------------------------------------
 #
 #   Deploying tests
@@ -104,7 +107,8 @@ Set-DeploymentTask setup:web {
 #Invoke-DeploymentTask setup:env -On staging -Verbose
 
 # perform deployment to staging
-New-Deployment myapp 1.0.0 -To staging -Verbose #-Serial
+#New-Deployment myapp 1.0.0 -To staging -Verbose -Serial
+New-Deployment myapp 1.0.0 -To local -Verbose -Serial
 
 # remove deployment
 #Remove-Deployment $myapp -From $staging
