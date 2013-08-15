@@ -107,20 +107,25 @@ Set-DeploymentTask setup:web {
 #Invoke-DeploymentTask setup:env -On staging -Verbose
 
 # perform deployment to staging
-#New-Deployment myapp 1.0.0 -To staging -Verbose -Serial
-New-Deployment myapp 1.0.0 -To local -Verbose -Serial
+#New-Deployment myapp 1.0.1 -To staging -Verbose #-Serial
+#New-Deployment myapp 1.0.7 -To local -Verbose -Serial
+#Remove-Deployment myapp -From local -Verbose -Serial
+
+#Restore-Deployment myapp -On local
 
 # remove deployment
+#Remove-Deployment myapp -From staging
 #Remove-Deployment $myapp -From $staging
 
 # rollback deployment
 #Restore-Deployment $myapp -On $staging
 
-# restart deployment
-#Restart-Deployment $myapp -On $staging -Verbose
 
-# stop deployment
-#Stop-Deployment $myapp -On $staging
+Restart-Deployment myapp -On local -Serial -Verbose
+
+
+#Stop-Deployment myapp -On local
+#Start-Deployment myapp -On local
 
 # start deployment
 #Start-Deployment $myapp -On $staging

@@ -2,6 +2,7 @@
 $config = @{}
 $config.TaskExecutionTimeout = 300 # 5 min
 $config.ApplicationsPath = "c:\applications"
+$config.KeepPreviousVersions = 5
 
 # connection defaults
 $config.UseSSL = $true
@@ -172,6 +173,9 @@ function Add-ServiceRole
         [string]$BasePath,
 
         [Parameter(Mandatory=$false)]
+        [string]$ServiceExecutable = $null,
+
+        [Parameter(Mandatory=$false)]
         [string]$ServiceName = $null,
 
         [Parameter(Mandatory=$false)]
@@ -200,11 +204,14 @@ function Add-ServiceRole
         DeploymentGroup = ValueOrDefault $DeploymentGroup "app"
         PackageUrl = $PackageUrl
         BasePath = $BasePath
-        ServiceName = ValueOrDefault $ServiceName $Name
-        ServiceDisplayName = ValueOrDefault $ServiceDisplayName $Name
-        ServiceDescription = $ServiceDescription
         Configuration = $Configuration
     }
+
+    $role.ServiceExecutable = $ServiceExecutable
+    $role.ServiceName = ValueOrDefault $ServiceName $Name
+    $role.ServiceDisplayName = ValueOrDefault $ServiceDisplayName $role.ServiceName
+    $role.ServiceDescription = ValueOrDefault $ServiceDescription "Deployed by AppRoller"
+
     $Application.Roles[$Name] = $role
 }
 
@@ -758,7 +765,7 @@ function New-Deployment
         [Parameter(Position=1, Mandatory=$true)]
         $Version,
 
-        [Parameter(Position=2, Mandatory=$false)][alias("To")]
+        [Parameter(Position=2, Mandatory=$true)][alias("To")]
         $Environment,
 
         [Parameter(Mandatory=$false)]
@@ -779,7 +786,7 @@ function Remove-Deployment
         [Parameter(Position=1, Mandatory=$false)]
         $Version,
 
-        [Parameter(Mandatory=$false)][alias("From")]
+        [Parameter(Mandatory=$true)][alias("From")]
         $Environment,
 
         [Parameter(Mandatory=$false)]
@@ -797,11 +804,11 @@ function Restore-Deployment
         [Parameter(Position=0, Mandatory=$true, ValueFromPipeline=$true)]
         $Application,
 
-        [Parameter(Position=1, Mandatory=$false)][alias("On")]
-        $Environment,
-
-        [Parameter(Mandatory=$false)]
+        [Parameter(Position=1, Mandatory=$false)]
         $Version,
+
+        [Parameter(Mandatory=$true)][alias("On")]
+        $Environment,
 
         [Parameter(Mandatory=$false)]
         [switch]$Serial = $false
@@ -1063,6 +1070,7 @@ Set-DeploymentTask init {
         function Get-TempFileName
         {
             param (
+                [Parameter(Position=0,Mandatory=$false)]
                 $extension
             )
 
@@ -1071,13 +1079,33 @@ Set-DeploymentTask init {
             if($extension)
             {
                 # change extension
-                $fileName = [System.IO.Path]::GetFileNameWithoutExtension($fileName + $extension)
+                $fileName = [System.IO.Path]::GetFileNameWithoutExtension($fileName) + $extension
             }
             return [System.IO.Path]::Combine($tempPath, $fileName)
         }
 
+        function Get-WindowsService
+        {
+            param (
+                [Parameter(Position=0,Mandatory=$true)]
+                $serviceName
+            )
+
+            Get-WmiObject -Class Win32_Service -Filter "Name='$serviceName'"
+        }
+
+        function Get-VersionFromFileName($fileName)
+        {
+            return Get-VersionFromDirectory (Split-Path $fileName)
+        }
+
+        function Get-VersionFromDirectory($directory)
+        {
+            return $directory.Substring($directory.LastIndexOf("\") + 1)
+        }
+
         Export-ModuleMember -Function Push-TaskCallStack, Pop-TaskCallStack, Write-Log, Expand-Zip, Test-RoleApplicableToServer, `
-            Update-ApplicationConfig, Get-TempFileName
+            Update-ApplicationConfig, Get-TempFileName, Get-WindowsService, Get-VersionFromFileName, Get-VersionFromDirectory
     }
 }
 
@@ -1195,7 +1223,7 @@ Set-DeploymentTask set-role-folder {
     {
         $versionFolders = Get-ChildItem -Path $role.BasePath | Sort-Object -Property CreationTime -Descending
         $role.Versions = @(0) * $versionFolders.Count
-        for($i = 0; $i -lt $versions.Length; $i++)
+        for($i = 0; $i -lt $role.Versions.Length; $i++)
         {
             $role.Versions[$i] = $versionFolders[$i].Name
         }
@@ -1281,27 +1309,98 @@ Set-DeploymentTask deploy-service {
         throw "$($context.Application.Name) $($context.Version) role $($role.Name) deployment already exists."
     }
 
-    # download service package to temp location
-    $packageFile = Get-TempFileName ".zip"
-    Invoke-DeploymentTask download-package
+    $currentServiceExecutablePath = $null
+    try
+    {
+        # create application folder (with version info)
+        Write-Log "Create application folder: $($role.RootPath)"
+        New-Item -ItemType Directory -Force -Path $role.RootPath > $null
 
-    # check if the service already exists
+        # download service package to temp location
+        $packageFile = Get-TempFileName ".zip"
+        Invoke-DeploymentTask download-package
 
-        # stop the service
+        # unzip service package to application folder
+        Expand-Zip $packageFile $role.RootPath
 
-        # remove service
+        # find windows service executable
+        $serviceExecutablePath = $null
+        if($role.ServiceExecutable)
+        {
+            $serviceExecutablePath = Join-Path $role.RootPath $role.ServiceExecutable
+        }
+        else
+        {
+            $serviceExecutablePath = Get-ChildItem "$($role.RootPath)\*.exe" | Select-Object -First 1
+        }
+        Write-Log "Service executable path: $serviceExecutablePath"
 
-    # create application folder (with version info)
+        # update app.config
+        $appConfigPath = "$serviceExecutablePath.config"
+        if(Test-Path $appConfigPath)
+        {
+            Write-Log "Updating service configuration in $appConfigPath"
+            Update-ApplicationConfig -configPath $appConfigPath -variables $role.Configuration
+        }
 
-    # unzip service package to application folder
+        # check if the service already exists
+        $existingService = Get-WindowsService $role.ServiceName
+        if ($existingService -ne $null)
+        {
+            Write-Log "Service already exists, stopping..."
 
-    # update app.config
+            # remember path to restore in case of disaster
+            $currentServiceExecutablePath = $existingService.PathName
 
-    # install service
+            # stop the service
+            Stop-Service -Name $role.ServiceName -Force
 
-    # start service
+	        # wait 2 sec before continue
+	        Start-Sleep -s 2
 
-    # cleanup
+            # uninstall service
+            $existingService.Delete() > $null
+        }
+        else
+        {
+            Write-Log "Service does not exists."
+        }
+
+        # install service
+        Write-Log "Installing service $($role.ServiceName)"
+        New-Service -Name $role.ServiceName -BinaryPathName $serviceExecutablePath `
+            -DisplayName $role.ServiceDisplayName -StartupType Automatic -Description $role.ServiceDescription > $null
+
+        # start service
+        Write-Log "Starting service..."
+        Start-Service -Name $role.ServiceName
+
+        # delete previous versions
+        if($role.Versions.length -gt $context.Configuration.KeepPreviousVersions)
+        {
+            for($i = $context.Configuration.KeepPreviousVersions; $i -lt $role.Versions.length; $i++)
+            {
+                $version = $role.Versions[$i]
+                Write-Log "Deleting old version $version"
+                Remove-Item (Join-Path $role.BasePath $version) -Force -Recurse
+            }
+        }
+    }
+    catch
+    {
+        # delete new application folder
+        if(Test-Path $role.RootPath)
+        {
+            Remove-Item $role.RootPath -Force -Recurse
+        }
+        throw
+    }
+    finally
+    {
+        # cleanup
+        Write-Log "Cleanup..."
+        Remove-Item $packageFile -Force
+    }
 }
 
 
@@ -1311,7 +1410,7 @@ Set-DeploymentTask deploy-service {
 #
 # --------------------------------------------
 
-Set-DeploymentTask remove -Requires remove-website,remove-service {
+Set-DeploymentTask remove -Requires set-role-folder,remove-website,remove-service {
     Write-Log "Removing deployment"
 
     # remove role-by-role
@@ -1330,6 +1429,58 @@ Set-DeploymentTask remove-website {
 
 Set-DeploymentTask remove-service {
     Write-Log "Removing Windows service $($role.Name)"
+
+    # determine the location of application folder
+    Invoke-DeploymentTask set-role-folder
+
+    # get service details
+    $service = Get-WindowsService $role.ServiceName
+    if ($service -ne $null)
+    {
+        $serviceExecutable = $service.PathName
+
+        # make sure we are not trying to delete active version
+        $currentVersion = Get-VersionFromFileName $serviceExecutable
+
+        if($currentVersion -eq $context.Version)
+        {
+            throw "Active version $version cannot be removed. Specify previous version to remove or ommit -Version parameter to completely delete application."
+        }
+    }
+
+    if(-not $context.Version)
+    {
+        # delete entire deployment
+        Write-Log "Deleting all service deployments"
+
+        # delete service
+        if ($service -ne $null)
+        {
+            # stop the service
+            Write-Log "Stopping service $($role.ServiceName)..."
+            Stop-Service -Name $role.ServiceName -Force
+
+	        # wait 2 sec before continue
+	        Start-Sleep -s 2
+
+            # uninstall service
+            Write-Log "Deleting service $($role.ServiceName)"
+            $service.Delete() > $null
+        }
+
+        # delete role folder recursively
+        Write-Log "Deleting application directory $($role.BasePath)"
+        Remove-Item $role.BasePath -Force -Recurse
+    }
+    else
+    {
+        # delete specific version
+        if(Test-Path $role.RootPath)
+        {
+            Write-Log "Deleting deployment directory $($role.RootPath)"
+            Remove-Item $role.RootPath -Force -Recurse
+        }
+    }
 }
 
 
@@ -1339,7 +1490,7 @@ Set-DeploymentTask remove-service {
 #
 # --------------------------------------------
 
-Set-DeploymentTask rollback -Requires rollback-website,rollback-service {
+Set-DeploymentTask rollback -Requires set-role-folder,rollback-website,rollback-service {
     Write-Log "Rollback deployment"
 
     # rollback role-by-role
@@ -1358,6 +1509,87 @@ Set-DeploymentTask rollback-website {
 
 Set-DeploymentTask rollback-service {
     Write-Log "Rollback Windows service $($role.Name)"
+
+    # determine the location of application folder
+    Invoke-DeploymentTask set-role-folder
+
+    # check if rollback is possible
+    if($role.Versions.length -lt 2)
+    {
+        throw "There are no previous versions to rollback to."
+    }
+
+    $currentVersion = $role.Versions[0]
+
+    # if version is not specified we rollback to the previous version
+    $rollbackVersion = $role.Versions[1]
+    $rollbackPath = Join-Path $role.BasePath $rollbackVersion
+
+    # is that a specific version we want to rollback to?
+    if($context.Version)
+    {
+        # make sure we don't rollback to active version
+        if($context.Version -eq $currentVersion)
+        {
+            throw "Cannot rollback to the currently deployed version $currentVersion"
+        }
+
+        if(Test-Path $role.RootPath)
+        {
+            $rollbackVersion = $context.Version
+            $rollbackPath = $role.RootPath
+        }
+        else
+        {
+            throw "Version $($context.Version) not found."
+        }
+    }
+
+    Write-Log "Rollback service to $rollbackVersion"
+
+    # check if the service already exists
+    $service = Get-WindowsService $role.ServiceName
+    if ($service -ne $null)
+    {
+        Write-Log "Service already exists, stopping..."
+
+        # stop the service
+        Stop-Service -Name $role.ServiceName -Force
+
+	    # wait 2 sec before continue
+	    Start-Sleep -s 2
+
+        # uninstall service
+        $service.Delete() > $null
+    }
+    else
+    {
+        Write-Log "Service does not exists."
+    }
+
+    # find windows service executable
+    $serviceExecutablePath = $null
+    if($role.ServiceExecutable)
+    {
+        $serviceExecutablePath = Join-Path $rollbackPath $role.ServiceExecutable
+    }
+    else
+    {
+        $serviceExecutablePath = Get-ChildItem "$rollbackPath\*.exe" | Select-Object -First 1
+    }
+    Write-Log "Service executable path: $serviceExecutablePath"
+
+    # install service
+    Write-Log "Installing service $($role.ServiceName)"
+    New-Service -Name $role.ServiceName -BinaryPathName $serviceExecutablePath `
+        -DisplayName $role.ServiceDisplayName -StartupType Automatic -Description $role.ServiceDescription > $null
+
+    # start service
+    Write-Log "Starting service..."
+    Start-Service -Name $role.ServiceName
+
+    # delete current version
+    Remove-Item (Join-Path $role.BasePath $currentVersion) -Force -Recurse
 }
 
 
@@ -1367,7 +1599,7 @@ Set-DeploymentTask rollback-service {
 #
 # --------------------------------------------
 
-Set-DeploymentTask start -Requires start-website,start-service {
+Set-DeploymentTask start -Requires set-role-folder,start-website,start-service {
     Write-Log "Start deployment"
 
     # start role-by-role
@@ -1380,7 +1612,7 @@ Set-DeploymentTask start -Requires start-website,start-service {
     }
 }
 
-Set-DeploymentTask stop -Requires stop-website,stop-service {
+Set-DeploymentTask stop -Requires set-role-folder,stop-website,stop-service {
     Write-Log "Stop deployment"
 
     # stop role-by-role
@@ -1397,16 +1629,36 @@ Set-DeploymentTask start-website {
     Write-Log "Start website $($role.Name)"
 }
 
-Set-DeploymentTask start-service {
-    Write-Log "Start Windows service $($role.Name)"
-}
-
 Set-DeploymentTask stop-website {
     Write-Log "Stop website $($role.Name)"
 }
 
+Set-DeploymentTask start-service {
+    # get service details
+    $service = Get-WindowsService $role.ServiceName
+    if ($service -ne $null)
+    {
+        Write-Log "Starting Windows service $($role.ServiceName)..."
+
+        # start the service
+        Start-Service -Name $role.ServiceName
+
+        Write-Log "Service started"
+    }
+}
+
 Set-DeploymentTask stop-service {
-    Write-Log "Stop Windows service $($role.Name)"
+    # get service details
+    $service = Get-WindowsService $role.ServiceName
+    if ($service -ne $null)
+    {
+        Write-Log "Stopping Windows service $($role.ServiceName)..."
+
+        # stop the service
+        Stop-Service -Name $role.ServiceName -Force
+
+        Write-Log "Service stopped"
+    }
 }
 
 Set-DeploymentTask restart -Requires start,stop {
