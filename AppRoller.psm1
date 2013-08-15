@@ -1,6 +1,7 @@
 # config
 $config = @{}
 $config.taskExecutionTimeout = 300 # 5 min
+$config.applicationsPath = "c:\applications"
 
 # context
 $script:context = @{}
@@ -10,7 +11,7 @@ $currentContext.environments = @{}
 $currentContext.tasks = @{}
 $currentContext.remoteSessions = @{}
 
-function Set-DeploymentConfig
+function Set-DeploymentConfiguration
 {
     [CmdletBinding()]
     param
@@ -31,13 +32,13 @@ function New-Application
     param
     (
         [Parameter(Position=0, Mandatory=$true)]
-        $Name,
+        [string]$Name,
 
         [Parameter(Mandatory=$false)]
-        $BasePath,
+        [string]$BasePath,
 
         [Parameter(Mandatory=$false)]
-        $Variables = @{}
+        $Configuration = @{}
     )
 
     Write-Verbose "New-Application $Name"
@@ -52,7 +53,7 @@ function New-Application
     $app = @{
         Name = $Name
         BasePath = $BasePath
-        Variables = $Variables
+        Configuration = $Configuration
         Roles = @{}
     }
 
@@ -116,7 +117,7 @@ function Add-WebSiteRole
         [string]$WebsiteHost = $null,
 
         [Parameter(Mandatory=$false)]
-        $Variables = @{}
+        $Configuration = @{}
     )
 
     Write-Verbose "Add-WebsiteRole"
@@ -130,6 +131,7 @@ function Add-WebSiteRole
 
     # add role info to the application config
     $role = @{
+        Type = "website"
         Name = $Name
         DeploymentGroup = ValueOrDefault $DeploymentGroup "web"
         PackageUrl = $PackageUrl
@@ -139,7 +141,7 @@ function Add-WebSiteRole
         WebsiteIP = ValueOrDefault $WebsiteIP "*"
         WebsitePort = ValueOrDefault $WebsitePort 80
         WebsiteHost = $WebsiteHost
-        Variables = $Variables
+        Configuration = $Configuration
     }
     $Application.Roles[$Name] = $role
 }
@@ -153,13 +155,13 @@ function Add-ServiceRole
         $Application,
 
         [Parameter(Mandatory=$true)]
-        $Name,
+        [string]$Name,
 
         [Parameter(Mandatory=$false)]
-        $DeploymentGroup,
+        [string]$DeploymentGroup,
 
         [Parameter(Mandatory=$true)]
-        $PackageUrl,
+        [string]$PackageUrl,
 
         [Parameter(Mandatory=$false)]
         [string]$BasePath,
@@ -174,7 +176,7 @@ function Add-ServiceRole
         [string]$ServiceDescription = $null,
 
         [Parameter(Mandatory=$false)]
-        $Variables = @{}
+        $Configuration = @{}
     )
 
     Write-Verbose "Add-ServiceRole"
@@ -188,6 +190,7 @@ function Add-ServiceRole
 
     # add role info to the application config
     $role = @{
+        Type = "service"
         Name = $Name
         DeploymentGroup = ValueOrDefault $DeploymentGroup "app"
         PackageUrl = $PackageUrl
@@ -195,7 +198,7 @@ function Add-ServiceRole
         ServiceName = ValueOrDefault $ServiceName $Name
         ServiceDisplayName = ValueOrDefault $ServiceDisplayName $Name
         ServiceDescription = $ServiceDescription
-        Variables = $Variables
+        Configuration = $Configuration
     }
     $Application.Roles[$Name] = $role
 }
@@ -296,7 +299,10 @@ function New-Environment
         $Name,
 
         [Parameter(Mandatory=$false)]
-        [PSCredential]$Credential
+        [PSCredential]$Credential,
+
+        [Parameter(Mandatory=$false)]
+        $Configuration = @{}
     )
 
     Write-Verbose "New-Environment $Name"
@@ -306,6 +312,7 @@ function New-Environment
         Name = $Name
         Credential = $Credential
         Servers = @{}
+        Configuration = $Configuration
     }
 
     # verify if environment already exists
@@ -517,11 +524,17 @@ function Invoke-DeploymentTask
         $serverTasks = $taskContext.ServerTasks[$serverAddress]
 
         $scriptContext = @{
+            Configuration = $config
             TaskName = $taskContext.TaskName
             Application = $taskContext.Application
             Version = $taskContext.Version
-            ServerAddress = $server.ServerAddress
-            ServerDeploymentGroup = $server.DeploymentGroup
+            Server = @{
+                ServerAddress = $server.ServerAddress
+                DeploymentGroup = $server.DeploymentGroup                
+            }
+            Environment = @{
+                Configuration = $environment.Configuration
+            }
             Tasks = $serverTasks.Tasks
         }
 
@@ -740,7 +753,7 @@ function Remove-Deployment
         [switch]$Serial = $false
     )
 
-    Write-Output "Removing application $($Application.name) $Version from $($Environment.name)"
+    Invoke-DeploymentTask remove $environment $application $version -serial $serial
 }
 
 function Restore-Deployment
@@ -761,7 +774,7 @@ function Restore-Deployment
         [switch]$Serial = $false
     )
 
-    Write-Output "Restore application $($Application.name) on $($Environment.name)"
+    Invoke-DeploymentTask rollback $environment $application $version -serial $serial
 }
 
 function Restart-Deployment
@@ -779,7 +792,7 @@ function Restart-Deployment
         [switch]$Serial = $false
     )
 
-    Write-Output "Restart application $($Application.name) on $($Environment.name)"
+    Invoke-DeploymentTask restart $environment $application -serial $serial
 }
 
 function Stop-Deployment
@@ -797,7 +810,7 @@ function Stop-Deployment
         [switch]$Serial = $false
     )
 
-    Write-Output "Stopping application $($Application.name) on $($Environment.name)"
+    Invoke-DeploymentTask stop $environment $application -serial $serial
 }
 
 function Start-Deployment
@@ -815,7 +828,23 @@ function Start-Deployment
         [switch]$Serial = $false
     )
 
-    Write-Output "Starting application $($Application.name) on $($Environment.name)"
+    Invoke-DeploymentTask start $environment $application -serial $serial
+}
+
+# --------------------------------------------
+#
+#   Helper functions
+#
+# --------------------------------------------
+function Get-AppVeyorPackageUrl
+{
+    param (
+        $applicationName,
+        $applicationVersion,
+        $artifactName
+    )
+
+    return "https://ci.appveyor.com/api/projects/artifact?projectName=$applicationName`&versionName=$applicationVersion`&artifactName=$artifactName"
 }
 
 
@@ -895,50 +924,439 @@ function ToArray
 Set-DeploymentTask init {
     
     $m = New-Module -Name "CommonFunctions" -ScriptBlock {
+        
         function Write-Log($message)
         {
             $callStack = $context.CallStack.ToArray()
             [array]::Reverse($callStack)
             $taskName = $callStack -join "]["
-            Write-Output "[$($context.ServerAddress)][$taskName] $(Get-Date -f g) - $message"
+            Write-Output "[$($context.Server.ServerAddress)][$taskName] $(Get-Date -f g) - $message"
         }
 
-        Export-ModuleMember -Function Write-Log
+        function Expand-Zip
+        {
+            param(
+                [Parameter(Position=0,Mandatory=1)]$zipFile,
+                [Parameter(Position=1,Mandatory=1)]$destination
+            )
+
+            $shellApp = New-Object -com Shell.Application
+            $objZip = $shellApp.Namespace($zipFile)
+            $objDestination = $shellApp.Namespace($destination)
+            $objDestination.CopyHere($objZip.Items(), 16)
+        }
+
+        function Update-ApplicationConfig
+        {
+            param (
+                $configPath,
+                $variables
+            )
+
+            [xml]$xml = New-Object XML
+            $xml.Load($configPath)
+
+            # appSettings section
+            foreach($appSettings in $xml.selectnodes("//*[local-name() = 'appSettings']"))
+            {
+                foreach($setting in $appSettings.ChildNodes)
+                {
+                    if($setting.key)
+                    {
+                        $value = $variables["appSettings.$($setting.key)"]
+                        if($value -ne $null)
+                        {
+                            Write-Log "Updating <appSettings> entry `"$($setting.key)`" to `"$value`""
+                            $setting.value = $value
+                        }
+                    }
+                }
+            }
+
+            # connectionStrings
+            foreach($connectionStrings in $xml.selectnodes("//*[local-name() = 'connectionStrings']"))
+            {
+                foreach($entry in $connectionStrings.ChildNodes)
+                {
+                    if($entry.name)
+                    {
+                        $connectionString = $variables["connectionStrings.$($entry.name)"]
+                        if($connectionString -ne $null)
+                        {
+                            Write-Log "Updating <connectionStrings> entry `"$($entry.name)`" to `"$connectionString`""
+                            $entry.connectionString = $connectionString
+                        }
+                    }
+                }
+            }
+
+            $xml.Save($configPath)
+        }
+
+        function Test-RoleApplicableToServer
+        {
+            param (
+                $role
+            )
+
+            # find intersection of two arrays of DeploymentGroup
+            $commonGroups = $role.DeploymentGroup | ?{$context.Server.DeploymentGroup -contains $_}
+            return ($commonGroups.length -gt 0)
+        }
+
+        function Get-TempFileName
+        {
+            param (
+                $extension
+            )
+
+            $tempPath = [System.IO.Path]::GetTempPath()
+            $fileName = [System.IO.Path]::GetRandomFileName()
+            if($extension)
+            {
+                # change extension
+                $fileName = [System.IO.Path]::GetFileNameWithoutExtension($fileName + $extension)
+            }
+            return [System.IO.Path]::Combine($tempPath, $fileName)
+        }
+
+        Export-ModuleMember -Function Write-Log, Expand-Zip, Test-RoleApplicableToServer, Update-ApplicationConfig, Get-TempFileName
     }
 }
 
-Set-DeploymentTask download-package {
-    Write-Log "Downloading package"
+# --------------------------------------------
+#
+#   "Deploy" tasks
+#
+# --------------------------------------------
+
+Set-DeploymentTask download-package -Requires authenticate-download-client {
+    Write-Log "Downloading package $($role.PackageUrl)"
+
+    # expects parameters:
+    #    $role - application role
+    #    $packageFile - local package file
+    
+    $webClient = New-Object System.Net.WebClient
+
+    # call custom method to authenticate web client
+    Invoke-DeploymentTask authenticate-download-client
+
+    # download
+    $webClient.DownloadFile($role.PackageUrl, $packageFile)
 }
 
-Set-DeploymentTask deploy -Requires download-package {
+Set-DeploymentTask authenticate-download-client {
+    # expects parameters:
+    #    $webClient - WebClient instance to download package
+    #    $context.Configuration["appveyorApiKey"] - AppVeyor API access key
+    #    $context.Configuration["appveyorApiSecret"] - AppVeyor API secret key
+    #    $context.Configuration["accountId"] - AppVeyor API account ID to login
+
+    if(-not $role.PackageUrl.StartsWith("https://ci.appveyor.com/api/"))
+    {
+        return
+    }
+
+    $apiAccessKey = $context.Configuration["appveyorApiKey"]
+    $apiSecretKey = $context.Configuration["appveyorApiSecret"]
+    $accountId = $context.Configuration["appveyorAccountId"]
+
+    # verify parameters
+    if(-not $apiAccessKey -or -not $apiSecretKey)
+    {
+        $msg = @"
+"Unable to download package from AppVeyor repository.
+To authenticate request set AppVeyor API keys in global deployment configuration:
+- Set-DeploymentConfiguration appveyorApiKey <api-access-key>
+- Set-DeploymentConfiguration appveyorApiSecret <api-secret-key>"
+"@
+        throw $msg
+    }
+
+    $timestamp = [DateTime]::UtcNow.ToString("r")
+
+    # generate signature
+    $stringToSign = $timestamp
+	$secretKeyBytes = [byte[]]([System.Text.Encoding]::ASCII.GetBytes($apiSecretKey))
+	$stringToSignBytes = [byte[]]([System.Text.Encoding]::ASCII.GetBytes($stringToSign))
+	
+	[System.Security.Cryptography.HMACSHA1] $signer = New-Object System.Security.Cryptography.HMACSHA1(,$secretKeyBytes)
+	$signatureHash = $signer.ComputeHash($stringToSignBytes)
+	$signature = [System.Convert]::ToBase64String($signatureHash)
+
+    $headerValue = "HMAC-SHA1 accessKey=`"$apiAccessKey`", timestamp=`"$timestamp`", signature=`"$signature`""
+    if($accountId)
+    {
+        $headerValue = $headerValue + ", accountId=`"$accountId`""
+    }
+    
+    # set web client header
+    $webClient.Headers.Add("Authorization", $headerValue)
+}
+
+Set-DeploymentTask set-role-folder {
+    
+    $rootPath = $null
+    $basePath = $null
+
+    if($role.BasePath)
+    {
+        $basePath = $role.BasePath
+    }
+    elseif($context.Application.BasePath)
+    {
+        $basePath = Join-Path $context.Application.BasePath $role.Name
+    }
+    elseif($context.Configuration.applicationsPath)
+    {
+        $basePath = $context.Configuration.applicationsPath
+        $basePath = Join-Path $basePath $context.Application.Name
+        $basePath = Join-Path $basePath $role.Name
+    }
+
+    if(-not $basePath)
+    {
+        throw "Cannot determine role base path"
+    }
+    else
+    {
+        $role.BasePath = $basePath
+    }
+
+    # append version
+    if($context.Version)
+    {
+        $role.RootPath = Join-Path $role.BasePath $context.Version
+    }
+
+    Write-Log "Role base path: $($role.BasePath)"
+    Write-Log "Role deployment path: $($role.RootPath)"
+
+    # read all installed role versions
+    if(Test-Path $role.BasePath)
+    {
+        $versionFolders = Get-ChildItem -Path $role.BasePath | Sort-Object -Property CreationTime -Descending
+        $role.Versions = @(0) * $versionFolders.Count
+        for($i = 0; $i -lt $versions.Length; $i++)
+        {
+            $role.Versions[$i] = $versionFolders[$i].Name
+        }
+
+        if($role.Versions.length -gt 0)
+        {
+            Write-Log "Role installed version: $($role.Versions[0])"
+        }
+    }
+}
+
+Set-DeploymentTask deploy -Requires set-role-folder,download-package,deploy-website,deploy-service,deploy-console {
     Write-Log "Deploying application"
 
-    if($context.Application.OnPackageDownload)
+    # deploy each role separately
+    foreach($role in $context.Application.Roles.values)
     {
-        $scr = $ExecutionContext.InvokeCommand.NewScriptBlock($context.Application.OnPackageDownload)
-        .$scr
+        if(Test-RoleApplicableToServer $role)
+        {
+            Invoke-DeploymentTask "deploy-$($role.Type)"
+        }
+    }
+}
+
+Set-DeploymentTask deploy-website {
+    Write-Log "Deploying website $($role.Name)"
+
+    # determine the location of application folder
+    Invoke-DeploymentTask set-role-folder
+
+    # $role.BasePath - base path for role versions
+    # $role.RootPath - role version installation root (application root)
+    # $role.Versions - the list of installed versions (latest first)
+
+    # ... and make sure the folder does not exists
+    if(Test-Path $role.RootPath)
+    {
+        throw "$($context.Application.Name) $($context.Version) role $($role.Name) deployment already exists."
     }
 
+    # download service package to temp location
+    $packageFile = Get-TempFileName ".zip"
     Invoke-DeploymentTask download-package
 
-    Start-Sleep -s 1
+    # check if website already exists
+
+        # stop application pool
+
+    # create application folder (with version info)
+
+    # unzip service package to application folder
+
+    # update web.config
+
+    # if website does not exist
+        
+        # create application pool
+
+        # create web site
+
+    # else
+
+        # update website root folder
+
+        # start application pool
+
+    # cleanup
 }
 
-Set-DeploymentTask remove {
-    Write-Log "Removing application"
+Set-DeploymentTask deploy-service {
+    Write-Log "Deploying Windows service $($role.Name)"
+
+    # determine the location of application folder
+    Invoke-DeploymentTask set-role-folder
+
+    # ... and make sure the folder does not exists
+    if(Test-Path $role.RootPath)
+    {
+        throw "$($context.Application.Name) $($context.Version) role $($role.Name) deployment already exists."
+    }
+
+    # download service package to temp location
+    $packageFile = Get-TempFileName ".zip"
+    Invoke-DeploymentTask download-package
+
+    # check if the service already exists
+
+        # stop the service
+
+        # remove service
+
+    # create application folder (with version info)
+
+    # unzip service package to application folder
+
+    # update app.config
+
+    # install service
+
+    # start service
+
+    # cleanup
 }
 
-Set-DeploymentTask rollback {
-    Write-Log "Rolling back application to the previous version"
+
+# --------------------------------------------
+#
+#   "Remove" tasks
+#
+# --------------------------------------------
+
+Set-DeploymentTask remove -Requires remove-website,remove-service {
+    Write-Log "Removing deployment"
+
+    # remove role-by-role
+    foreach($role in $context.Application.Roles.values)
+    {
+        if(Test-RoleApplicableToServer $role)
+        {
+            Invoke-DeploymentTask "remove-$($role.Type)"
+        }
+    }
 }
 
-Set-DeploymentTask functions -On init {
-    Write-Log "Add custom functions..."
+Set-DeploymentTask remove-website {
+    Write-Log "Removing website $($role.Name)"
+}
+
+Set-DeploymentTask remove-service {
+    Write-Log "Removing Windows service $($role.Name)"
+}
+
+
+# --------------------------------------------
+#
+#   "Rollback" tasks
+#
+# --------------------------------------------
+
+Set-DeploymentTask rollback -Requires rollback-website,rollback-service {
+    Write-Log "Rollback deployment"
+
+    # rollback role-by-role
+    foreach($role in $context.Application.Roles.values)
+    {
+        if(Test-RoleApplicableToServer $role)
+        {
+            Invoke-DeploymentTask "rollback-$($role.Type)"
+        }
+    }
+}
+
+Set-DeploymentTask rollback-website {
+    Write-Log "Rollback website $($role.Name)"
+}
+
+Set-DeploymentTask rollback-service {
+    Write-Log "Rollback Windows service $($role.Name)"
+}
+
+
+# --------------------------------------------
+#
+#   "Start", "Stop", "Restart" tasks
+#
+# --------------------------------------------
+
+Set-DeploymentTask start -Requires start-website,start-service {
+    Write-Log "Start deployment"
+
+    # start role-by-role
+    foreach($role in $context.Application.Roles.values)
+    {
+        if(Test-RoleApplicableToServer $role)
+        {
+            Invoke-DeploymentTask "start-$($role.Type)"
+        }
+    }
+}
+
+Set-DeploymentTask stop -Requires stop-website,stop-service {
+    Write-Log "Stop deployment"
+
+    # stop role-by-role
+    foreach($role in $context.Application.Roles.values)
+    {
+        if(Test-RoleApplicableToServer $role)
+        {
+            Invoke-DeploymentTask "stop-$($role.Type)"
+        }
+    }
+}
+
+Set-DeploymentTask start-website {
+    Write-Log "Start website $($role.Name)"
+}
+
+Set-DeploymentTask start-service {
+    Write-Log "Start Windows service $($role.Name)"
+}
+
+Set-DeploymentTask stop-website {
+    Write-Log "Stop website $($role.Name)"
+}
+
+Set-DeploymentTask stop-service {
+    Write-Log "Stop Windows service $($role.Name)"
+}
+
+Set-DeploymentTask restart -Requires start,stop {
+    Write-Log "Restart deployment"
+    Invoke-DeploymentTask stop
+    Invoke-DeploymentTask start
 }
 
 Export-ModuleMember -Function `
-    Set-DeploymentConfig, `
+    Set-DeploymentConfiguration, `
     New-Application, Add-WebSiteRole, Add-ServiceRole, Set-DeploymentTask, `
     New-Environment, Add-EnvironmentServer, `
-    Invoke-DeploymentTask, New-Deployment, Remove-Deployment, Restore-Deployment, Restart-Deployment, Stop-Deployment, Start-Deployment
+    Invoke-DeploymentTask, New-Deployment, Remove-Deployment, Restore-Deployment, Restart-Deployment, Stop-Deployment, Start-Deployment, `
+    Get-AppVeyorPackageUrl

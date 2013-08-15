@@ -3,8 +3,8 @@ Remove-Module AppRoller -ErrorAction SilentlyContinue
 $currentPath = Split-Path $myinvocation.mycommand.path
 Import-Module (Resolve-Path (Join-Path $currentPath  ..\AppRoller.psm1))
 
-$applicationName = "MyApp"
-$applicationVersion = 1.0.1
+$applicationName = "test-web"
+$applicationVersion = "1.0.7"
 
 $secureData = Get-ItemProperty -Path "HKLM:SOFTWARE\AppRoller\Tests"
 $adminUsername = $secureData.adminUsername
@@ -15,7 +15,9 @@ $credential = New-Object System.Management.Automation.PSCredential $adminUsernam
 
 # set global deployment configuration
 #Set-DeploymentConfig applicationsFolder "$($env:SystemDrive)\applications"
-Set-DeploymentConfig taskExecutionTimeout 60 # 1 min
+Set-DeploymentConfiguration taskExecutionTimeout 60 # 1 min
+Set-DeploymentConfiguration appveyorApiKey $secureData.appveyorApiKey
+Set-DeploymentConfiguration appveyorApiSecret $secureData.appveyorApiSecret
 
 
 # --------------------------------------------
@@ -25,20 +27,22 @@ Set-DeploymentConfig taskExecutionTimeout 60 # 1 min
 # --------------------------------------------
 
 # create new application
-$myApp = New-Application MyApp -BasePath "$($env:SystemDrive)\apps\myapp" -Variables @{
-    "appveyorApiKey" = "key1"
-    "appveyorApiSecret" = "secret1"
+$myApp = New-Application MyApp -Configuration @{
+    "key1" = "value1"
 }
 
 # add website role
-Add-WebSiteRole $myapp -Name "MyAppWebsite" -DeploymentGroup web -PackageUrl http://www.mysite.com/web-package.zip `
-    -BasePath "$($env:SystemDrive)\websites\myapp"
+Add-WebSiteRole $myapp -Name "MyAppWebsite" -DeploymentGroup web `
+    -PackageUrl (Get-AppVeyorPackageUrl $applicationName $applicationVersion "HelloAppVeyor.Web") `
+    -BasePath "c:\websites\$applicationName"
 
 
 # add service role
-Add-ServiceRole $myapp -Name "MyAppService" -PackageUrl http://www.mysite.com/service-package.zip -Variables @{
-    "ConnectionString.Default" = "server=locahost;"
-}
+Add-ServiceRole $myapp -Name "MyAppService" -DeploymentGroup app `
+    -PackageUrl (Get-AppVeyorPackageUrl $applicationName $applicationVersion "HelloAppVeyor.Service") `
+    -Configuration @{
+        "ConnectionString.Default" = "server=locahost;"
+    }
 
 # add custom deployment task
 Set-DeploymentTask task1 -Before deploy -Application $applicationName -Version 1.0.0 -DeploymentGroup web -PerGroup {
@@ -56,7 +60,10 @@ Set-DeploymentTask task3 -After rollback -Application $applicationName -Version 
 }
 
 # describe Staging environment
-$staging = New-Environment -Name Staging -Credential $credential
+$staging = New-Environment -Name Staging -Credential $credential -Configuration @{
+    var1 = "value1"
+    var2 = "value2"
+}
 Add-EnvironmentServer $staging "test-ps2.cloudapp.net" -Port 51281 -DeploymentGroup web,app
 Add-EnvironmentServer $staging "test-ps1.cloudapp.net" -Port 5986 -DeploymentGroup app `
     -Credential (New-Object System.Management.Automation.PSCredential "appveyor", $securePassword)
@@ -90,12 +97,6 @@ Set-DeploymentTask setup:web {
     $a
 }
 
-Set-DeploymentTask appveyor-download -On download-package {
-    Write-Log "Configure appveyor download!"
-    "AppVeyor API key: $($context.Application.Variables["appveyorApiKey"])"
-    "AppVeyor API secret: $($context.Application.Variables["appveyorApiSecret"])"
-}
-
 #Invoke-DeploymentTask setup:env -On staging -Verbose
 
 # perform deployment to staging
@@ -108,7 +109,7 @@ New-Deployment myapp 1.0.0 -To staging -Verbose #-Serial
 #Restore-Deployment $myapp -On $staging
 
 # restart deployment
-#Restart-Deployment $myapp -On $staging
+#Restart-Deployment $myapp -On $staging -Verbose
 
 # stop deployment
 #Stop-Deployment $myapp -On $staging
