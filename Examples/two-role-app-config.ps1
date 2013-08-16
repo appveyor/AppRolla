@@ -41,7 +41,7 @@ Add-WebSiteRole $myapp -Name "MyAppWebsite" -DeploymentGroup web `
     -WebsiteName "test deploy" `
     -WebsitePort 8333 `
     -PackageUrl (Get-AppVeyorPackageUrl $applicationName $applicationVersion "HelloAppVeyor.Web") `
-    -BasePath "c:\websites\$applicationName"
+    -BasePath '$($env:SystemDrive)\websites\test-web'
 
 
 # add service role
@@ -110,11 +110,11 @@ Set-DeploymentTask setup:web {
 #New-Deployment myapp 1.0.0 -To staging -Verbose #-Serial
 #New-Deployment myapp 1.0.1 -To staging -Verbose #-Serial
 #New-Deployment myapp 1.0.2 -To staging -Verbose #-Serial
-#New-Deployment myapp 1.0.3 -To staging -Verbose #-Serial
+#New-Deployment myapp 1.0.4 -To staging -Verbose #-Serial
 
 #New-Deployment myapp 1.0.0 -To local -Verbose -Serial
 
-#Remove-Deployment myapp -From staging -Verbose -Serial
+Remove-Deployment myapp -From staging -Verbose -Serial
 
 #Restore-Deployment myapp -On local
 #Restore-Deployment myapp -On staging
@@ -127,12 +127,13 @@ Set-DeploymentTask setup:web {
 
 #Restart-Deployment myapp -On staging -Serial -Verbose
 
+#Get-DeploymentConfiguration UseSSL
 
 #Stop-Deployment myapp -On local
 #Stop-Deployment myapp -On staging
 #Start-Deployment myapp -On local
 
-Start-Deployment myapp -On staging
+#Start-Deployment myapp -On staging -Verbose
 
 # start deployment
 #Start-Deployment $myapp -On $staging

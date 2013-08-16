@@ -1,12 +1,21 @@
 # config
 $config = @{}
 $config.TaskExecutionTimeout = 300 # 5 min
-$config.ApplicationsPath = "c:\applications"
+
+# default remote root for deployed applications; the value is in single quotes to be evaluated remotely
+$config.ApplicationsPath = '$($env:SystemDrive)\applications'
+
+# the maximum number of previous deployment versions to keep on remote hosts
 $config.KeepPreviousVersions = 5
 
-# connection defaults
+# if $true a connection to remote host will use SSL and port defaults to 5986
+# if $false port defaults to 5985
 $config.UseSSL = $true
+
+# suppress certificate Certificate Authority (CA) check when connecting via SSL
 $config.SkipCACheck = $true
+
+# suppress certificate Canonical Name (CN) check when connecting via SSL
 $config.SkipCNCheck = $true
 
 # context
@@ -17,6 +26,7 @@ $currentContext.environments = @{}
 $currentContext.tasks = @{}
 $currentContext.remoteSessions = @{}
 
+#region Configuration cmdlets
 function Set-DeploymentConfiguration
 {
     [CmdletBinding()]
@@ -32,6 +42,27 @@ function Set-DeploymentConfiguration
     $config[$Name] = $Value
 }
 
+function Get-DeploymentConfiguration
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$false)]
+        $Name
+    )
+
+    if($Name)
+    {
+        return $config[$Name]
+    }
+    else
+    {
+        return $config
+    }
+}
+#endregion
+
+#region Application cmdlets
 function New-Application
 {
     [CmdletBinding()]
@@ -214,8 +245,107 @@ function Add-ServiceRole
 
     $Application.Roles[$Name] = $role
 }
+#endregion
 
+#region Environment cmdlets
+function New-Environment
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true)]
+        $Name,
 
+        [Parameter(Mandatory=$false)]
+        [PSCredential]$Credential,
+
+        [Parameter(Mandatory=$false)]
+        $Configuration = @{}
+    )
+
+    Write-Verbose "New-Environment $Name"
+
+    # create new environment
+    $environment = @{
+        Name = $Name
+        Credential = $Credential
+        Servers = @{}
+        Configuration = $Configuration
+    }
+
+    # verify if environment already exists
+    if($currentContext.environments[$environment.Name] -eq $null)
+    {
+        $currentContext.environments[$environment.Name] = $environment
+    }
+    else
+    {
+        throw "Environment $Name already exists. Choose a different name."
+    }
+
+    # output to pipeline
+    return $environment
+}
+
+function Get-Environment
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true)]
+        $Name
+    )
+
+    $environment = $currentContext.environments[$Name]
+    if($environment -eq $null)
+    {
+        throw "Environment $Name not found."
+    }
+    return $environment
+}
+
+function Add-EnvironmentServer
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true, ValueFromPipeline=$true)]
+        $Environment,
+
+        [Parameter(Position=1, Mandatory=$true)]
+        [string]$ServerAddress,
+
+        [Parameter(Mandatory=$false)]
+        [int]$Port = 0,
+
+        [Parameter(Mandatory=$false)]
+        [string[]]$DeploymentGroup = $null,
+
+        [Parameter(Mandatory=$false)]
+        [PSCredential]$Credential = $null
+    )
+
+    Write-Verbose "Add-EnvironmentServer $ServerAddress"
+
+    # verify if the server with specified address exists
+    $server = $Environment.Servers[$ServerAddress]
+    if($server -ne $null)
+    {
+        throw "Environment $($Environment.Name) has already $ServerAddress server added."
+    }
+
+    # add role info to the application config
+    $server = @{
+        ServerAddress = $ServerAddress
+        Port = $Port
+        DeploymentGroup = $DeploymentGroup
+        Credential = ValueOrDefault $Credential $Environment.Credential
+    }
+    $Environment.Servers[$ServerAddress] = $server
+}
+#endregion
+
+#region Task cmdlets
 function Set-DeploymentTask
 {
     [CmdletBinding()]
@@ -305,103 +435,6 @@ function Set-DeploymentTask
             }
         }
     }
-}
-
-
-function New-Environment
-{
-    [CmdletBinding()]
-    param
-    (
-        [Parameter(Position=0, Mandatory=$true)]
-        $Name,
-
-        [Parameter(Mandatory=$false)]
-        [PSCredential]$Credential,
-
-        [Parameter(Mandatory=$false)]
-        $Configuration = @{}
-    )
-
-    Write-Verbose "New-Environment $Name"
-
-    # create new environment
-    $environment = @{
-        Name = $Name
-        Credential = $Credential
-        Servers = @{}
-        Configuration = $Configuration
-    }
-
-    # verify if environment already exists
-    if($currentContext.environments[$environment.Name] -eq $null)
-    {
-        $currentContext.environments[$environment.Name] = $environment
-    }
-    else
-    {
-        throw "Environment $Name already exists. Choose a different name."
-    }
-
-    # output to pipeline
-    return $environment
-}
-
-function Get-Environment
-{
-    [CmdletBinding()]
-    param
-    (
-        [Parameter(Position=0, Mandatory=$true)]
-        $Name
-    )
-
-    $environment = $currentContext.environments[$Name]
-    if($environment -eq $null)
-    {
-        throw "Environment $Name not found."
-    }
-    return $environment
-}
-
-function Add-EnvironmentServer
-{
-    [CmdletBinding()]
-    param
-    (
-        [Parameter(Position=0, Mandatory=$true, ValueFromPipeline=$true)]
-        $Environment,
-
-        [Parameter(Position=1, Mandatory=$true)]
-        [string]$ServerAddress,
-
-        [Parameter(Mandatory=$false)]
-        [int]$Port,
-
-        [Parameter(Mandatory=$false)]
-        [string[]]$DeploymentGroup = $null,
-
-        [Parameter(Mandatory=$false)]
-        [PSCredential]$Credential = $null
-    )
-
-    Write-Verbose "Add-EnvironmentServer $ServerAddress"
-
-    # verify if the server with specified address exists
-    $server = $Environment.Servers[$ServerAddress]
-    if($server -ne $null)
-    {
-        throw "Environment $($Environment.Name) has already $ServerAddress server added."
-    }
-
-    # add role info to the application config
-    $server = @{
-        ServerAddress = $ServerAddress
-        Port = ValueOrDefault $Port 5986
-        DeploymentGroup = $DeploymentGroup
-        Credential = ValueOrDefault $Credential $Environment.Credential
-    }
-    $Environment.Servers[$ServerAddress] = $server
 }
 
 function Invoke-DeploymentTask
@@ -660,6 +693,72 @@ function Invoke-DeploymentTask
     Remove-RemoteSessions
 }
 
+function Get-RemoteSession
+{
+    [CmdletBinding()]
+    param
+    (
+        [string]$serverAddress,
+        [int]$port,
+        [PSCredential]$credential
+    )
+
+    $session = $currentContext.remoteSessions[$serverAddress]
+    if($session -eq $null)
+    {
+        $useSSL = $config.UseSSL
+        $skipCACheck = $config.SkipCACheck
+        $skipCNCheck = $config.SkipCNCheck
+
+        if($port -eq 0 -and $useSSL)
+        {
+            $port = 5986
+        }
+        elseif($port -eq 0)
+        {
+            $port = 5985
+        }
+
+        Write-Verbose "Connecting to $($serverAddress) port $port"
+
+        $options = New-PSSessionOption -SkipCACheck:$skipCACheck -SkipCNCheck:$skipCNCheck
+
+        # start new session
+        if($credential)
+        {
+            # connect with credentials
+            $session = New-PSSession -ComputerName $serverAddress -Port $port -Credential $credential `
+                -UseSSL:$useSSL -SessionOption $options
+        }
+        else
+        {
+            # connect without credentials
+            $session = New-PSSession -ComputerName $serverAddress -Port $port `
+                -UseSSL:$useSSL -SessionOption $options
+        }
+
+        # store it in a cache
+        $currentContext.remoteSessions[$serverAddress] = $session
+    }
+
+    return $session
+}
+
+function Remove-RemoteSessions
+{
+    foreach($session in $currentContext.remoteSessions.values)
+    {
+        Write-Verbose "Closing remote session to $($session.ComputerName)"
+        
+        if($session)
+        {
+            Remove-PSSession -Session $session
+        }
+    }
+
+    $currentContext.remoteSessions.Clear()
+}
+
 function Add-ApplicableTasks($tasks, $task, $filter)
 {
     if((IsTaskAppicable $task $filter))
@@ -761,7 +860,9 @@ function IsTaskAppicable($task, $filter)
 
     return $false
 }
+#endregion
 
+#region Deployment cmdlets
 function New-Deployment
 {
     [CmdletBinding()]
@@ -878,12 +979,9 @@ function Start-Deployment
 
     Invoke-DeploymentTask start $environment $application -serial $serial
 }
+#endregion
 
-# --------------------------------------------
-#
-#   Helper functions
-#
-# --------------------------------------------
+#region Helper functions
 function Get-AppVeyorPackageUrl
 {
     param (
@@ -895,12 +993,6 @@ function Get-AppVeyorPackageUrl
     return "https://ci.appveyor.com/api/projects/artifact?projectName=$applicationName`&versionName=$applicationVersion`&artifactName=$artifactName"
 }
 
-
-# --------------------------------------------
-#
-#   Private functions
-#
-# --------------------------------------------
 function IsLocalhost
 {
     [CmdletBinding()]
@@ -911,63 +1003,6 @@ function IsLocalhost
     )
 
     return ($serverAddress -eq "localhost" -or $serverAddress -eq "127.0.0.1")
-}
-
-function Get-RemoteSession
-{
-    [CmdletBinding()]
-    param
-    (
-        [string]$serverAddress,
-        [int]$port,
-        [PSCredential]$credential
-    )
-
-    $session = $currentContext.remoteSessions[$serverAddress]
-    if($session -eq $null)
-    {
-        Write-Verbose "Connecting to $($serverAddress) port $port"
-
-        $useSSL = $config.UseSSL
-        $skipCACheck = $config.SkipCACheck
-        $skipCNCheck = $config.SkipCNCheck
-
-        $options = New-PSSessionOption -SkipCACheck:$skipCACheck -SkipCNCheck:$skipCNCheck
-
-        # start new session
-        if($credential)
-        {
-            # connect with credentials
-            $session = New-PSSession -ComputerName $serverAddress -Port $port -Credential $credential `
-                -UseSSL:$useSSL -SessionOption $options
-        }
-        else
-        {
-            # connect without credentials
-            $session = New-PSSession -ComputerName $serverAddress -Port $port `
-                -UseSSL:$useSSL -SessionOption $options
-        }
-
-        # store it in a cache
-        $currentContext.remoteSessions[$serverAddress] = $session
-    }
-
-    return $session
-}
-
-function Remove-RemoteSessions
-{
-    foreach($session in $currentContext.remoteSessions.values)
-    {
-        Write-Verbose "Closing remote session to $($session.ComputerName)"
-        
-        if($session)
-        {
-            Remove-PSSession -Session $session
-        }
-    }
-
-    $currentContext.remoteSessions.Clear()
 }
 
 function ValueOrDefault($value, $default)
@@ -994,12 +1029,9 @@ function ToArray
         return ,$output; 
     }
 }
+#endregion
 
-# --------------------------------------------
-#
-#   Init tasks
-#
-# --------------------------------------------
+
 Set-DeploymentTask init {
     
     $m = New-Module -Name "CommonFunctions" -ScriptBlock {
@@ -1112,16 +1144,20 @@ Set-DeploymentTask init {
             return $directory.Substring($directory.LastIndexOf("\") + 1)
         }
 
+        function ConvertFrom-StringTemplate
+        {
+            param (
+                [Parameter(Position=0,Mandatory=$true)]
+                $str
+            )
+            & ([scriptblock]::Create("`"$str`""))
+        }
+
         Export-ModuleMember -Function Push-TaskCallStack, Pop-TaskCallStack, Write-Log, Expand-Zip, Test-RoleApplicableToServer, `
-            Update-ApplicationConfig, Get-TempFileName, Get-WindowsService, Get-VersionFromFileName, Get-VersionFromDirectory
+            Update-ApplicationConfig, Get-TempFileName, Get-WindowsService, Get-VersionFromFileName, Get-VersionFromDirectory, `
+            ConvertFrom-StringTemplate
     }
 }
-
-# --------------------------------------------
-#
-#   "Deploy" tasks
-#
-# --------------------------------------------
 
 Set-DeploymentTask download-package -Requires authenticate-download-client {
     Write-Log "Downloading package $($role.PackageUrl)"
@@ -1195,15 +1231,16 @@ Set-DeploymentTask setup-role-folder {
 
     if($role.BasePath)
     {
-        $basePath = $role.BasePath
+        $basePath = ConvertFrom-StringTemplate $role.BasePath
     }
     elseif($context.Application.BasePath)
     {
-        $basePath = Join-Path $context.Application.BasePath $role.Name
+        $basePath = ConvertFrom-StringTemplate $context.Application.BasePath
+        $basePath = Join-Path $basePath $role.Name
     }
     elseif($context.Configuration.applicationsPath)
     {
-        $basePath = $context.Configuration.applicationsPath
+        $basePath = ConvertFrom-StringTemplate $context.Configuration.applicationsPath
         $basePath = Join-Path $basePath $context.Application.Name
         $basePath = Join-Path $basePath $role.Name
     }
@@ -1483,13 +1520,6 @@ Set-DeploymentTask deploy-service {
     }
 }
 
-
-# --------------------------------------------
-#
-#   "Remove" tasks
-#
-# --------------------------------------------
-
 Set-DeploymentTask remove -Requires setup-role-folder,remove-website,remove-service {
     Write-Log "Removing deployment"
 
@@ -1630,13 +1660,6 @@ Set-DeploymentTask remove-service {
         }
     }
 }
-
-
-# --------------------------------------------
-#
-#   "Rollback" tasks
-#
-# --------------------------------------------
 
 Set-DeploymentTask rollback -Requires setup-role-folder,rollback-website,rollback-service {
     Write-Log "Rollback deployment"
@@ -1861,13 +1884,6 @@ Set-DeploymentTask rollback-service {
     Remove-Item (Join-Path $role.BasePath $currentVersion) -Force -Recurse
 }
 
-
-# --------------------------------------------
-#
-#   "Start", "Stop", "Restart" tasks
-#
-# --------------------------------------------
-
 Set-DeploymentTask start -Requires setup-role-folder,start-website,start-service {
     Write-Log "Start deployment"
 
@@ -1959,8 +1975,9 @@ Set-DeploymentTask restart -Requires start,stop {
     Invoke-DeploymentTask start
 }
 
+# export module members
 Export-ModuleMember -Function `
-    Set-DeploymentConfiguration, `
+    Set-DeploymentConfiguration, Get-DeploymentConfiguration, `
     New-Application, Add-WebSiteRole, Add-ServiceRole, Set-DeploymentTask, `
     New-Environment, Add-EnvironmentServer, `
     Invoke-DeploymentTask, New-Deployment, Remove-Deployment, Restore-Deployment, Restart-Deployment, Stop-Deployment, Start-Deployment, `
