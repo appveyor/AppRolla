@@ -95,9 +95,6 @@ function New-Application
     }
 
     $currentContext.applications[$Name] = $app
-
-    # output to pipeline
-    $app
 }
 
 function Get-Application
@@ -105,16 +102,25 @@ function Get-Application
     [CmdletBinding()]
     param
     (
-        [Parameter(Position=0, Mandatory=$true)]
+        [Parameter(Position=0, Mandatory=$false)]
         $Name
     )
 
-    $app = $currentContext.applications[$Name]
-    if($app -eq $null)
+    if($Name)
     {
-        throw "Application $Name not found."
+        # return specific application
+        $app = $currentContext.applications[$Name]
+        if($app -eq $null)
+        {
+            throw "Application $Name not found."
+        }
+        return $app
     }
-    return $app
+    else
+    {
+        # return all applications
+        return $currentContext.applications.values
+    }
 }
 
 
@@ -123,8 +129,8 @@ function Add-WebSiteRole
     [CmdletBinding()]
     param
     (
-        [Parameter(Position=0, Mandatory=$true, ValueFromPipeline=$true)]
-        $Application,
+        [Parameter(Position=0, Mandatory=$true)]
+        $ApplicationName,
 
         [Parameter(Mandatory=$true)]
         [string]$Name,
@@ -159,6 +165,9 @@ function Add-WebSiteRole
 
     Write-Verbose "Add-WebsiteRole"
 
+    # get application
+    $application = Get-Application $ApplicationName
+
     # verify if the role with such name exists
     $role = $Application.Roles[$Name]
     if($role -ne $null)
@@ -188,8 +197,8 @@ function Add-ServiceRole
     [CmdletBinding()]
     param
     (
-        [Parameter(Position=0, Mandatory=$true, ValueFromPipeline=$true)]
-        $Application,
+        [Parameter(Position=0, Mandatory=$true)]
+        $ApplicationName,
 
         [Parameter(Mandatory=$true)]
         [string]$Name,
@@ -220,6 +229,9 @@ function Add-ServiceRole
     )
 
     Write-Verbose "Add-ServiceRole"
+
+    # get application
+    $application = Get-Application $ApplicationName
 
     # verify if the role with such name exists
     $role = $Application.Roles[$Name]
@@ -282,9 +294,6 @@ function New-Environment
     {
         throw "Environment $Name already exists. Choose a different name."
     }
-
-    # output to pipeline
-    return $environment
 }
 
 function Get-Environment
@@ -292,16 +301,25 @@ function Get-Environment
     [CmdletBinding()]
     param
     (
-        [Parameter(Position=0, Mandatory=$true)]
+        [Parameter(Position=0, Mandatory=$false)]
         $Name
     )
 
-    $environment = $currentContext.environments[$Name]
-    if($environment -eq $null)
+    if($Name)
     {
-        throw "Environment $Name not found."
+        # get specific environment
+        $environment = $currentContext.environments[$Name]
+        if($environment -eq $null)
+        {
+            throw "Environment $Name not found."
+        }
+        return $environment
     }
-    return $environment
+    else
+    {
+        # return all environments
+        return $currentContext.environments.values
+    }
 }
 
 function Add-EnvironmentServer
@@ -309,8 +327,8 @@ function Add-EnvironmentServer
     [CmdletBinding()]
     param
     (
-        [Parameter(Position=0, Mandatory=$true, ValueFromPipeline=$true)]
-        $Environment,
+        [Parameter(Position=0, Mandatory=$true)]
+        $EnvironmentName,
 
         [Parameter(Position=1, Mandatory=$true)]
         [string]$ServerAddress,
@@ -326,6 +344,9 @@ function Add-EnvironmentServer
     )
 
     Write-Verbose "Add-EnvironmentServer $ServerAddress"
+
+    # find environment
+    $environment = Get-Environment $EnvironmentName
 
     # verify if the server with specified address exists
     $server = $Environment.Servers[$ServerAddress]
@@ -982,17 +1003,6 @@ function Start-Deployment
 #endregion
 
 #region Helper functions
-function Get-AppVeyorPackageUrl
-{
-    param (
-        $applicationName,
-        $applicationVersion,
-        $artifactName
-    )
-
-    return "https://ci.appveyor.com/api/projects/artifact?projectName=$applicationName`&versionName=$applicationVersion`&artifactName=$artifactName"
-}
-
 function IsLocalhost
 {
     [CmdletBinding()]
@@ -1975,10 +1985,14 @@ Set-DeploymentTask restart -Requires start,stop {
     Invoke-DeploymentTask start
 }
 
+# add local environment
+New-Environment local
+Add-EnvironmentServer local "localhost"
+
 # export module members
 Export-ModuleMember -Function `
     Set-DeploymentConfiguration, Get-DeploymentConfiguration, `
-    New-Application, Add-WebSiteRole, Add-ServiceRole, Set-DeploymentTask, `
-    New-Environment, Add-EnvironmentServer, `
-    Invoke-DeploymentTask, New-Deployment, Remove-Deployment, Restore-Deployment, Restart-Deployment, Stop-Deployment, Start-Deployment, `
-    Get-AppVeyorPackageUrl
+    New-Application, Get-Application, Add-WebSiteRole, Add-ServiceRole, `
+    New-Environment, Get-Environment, Add-EnvironmentServer, `
+    Set-DeploymentTask, `
+    Invoke-DeploymentTask, New-Deployment, Remove-Deployment, Restore-Deployment, Restart-Deployment, Stop-Deployment, Start-Deployment

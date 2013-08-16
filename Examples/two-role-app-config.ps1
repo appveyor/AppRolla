@@ -24,34 +24,48 @@ Set-DeploymentConfiguration TaskExecutionTimeout 60 # 1 min
 Set-DeploymentConfiguration AppveyorApiKey $secureData.appveyorApiKey
 Set-DeploymentConfiguration AppveyorApiSecret $secureData.appveyorApiSecret
 
+function Get-AppVeyorPackageUrl
+{
+    param (
+        $applicationName,
+        $applicationVersion,
+        $artifactName
+    )
 
-# --------------------------------------------
-#
-#   Configuring application and environments
-#
-# --------------------------------------------
+    return "https://ci.appveyor.com/api/projects/artifact?projectName=$applicationName`&versionName=$applicationVersion`&artifactName=$artifactName"
+}
 
-# create new application
-$myApp = New-Application MyApp -Configuration @{
+# add application
+New-Application MyApp -Configuration @{
     "key1" = "value1"
 }
 
-# add website role
-Add-WebSiteRole $myapp -Name "MyAppWebsite" -DeploymentGroup web `
+# add "Web site" role
+Add-WebSiteRole MyApp -Name "MyAppWebsite" -DeploymentGroup web `
     -WebsiteName "test deploy" `
     -WebsitePort 8333 `
     -PackageUrl (Get-AppVeyorPackageUrl $applicationName $applicationVersion "HelloAppVeyor.Web") `
     -BasePath '$($env:SystemDrive)\websites\test-web'
 
-
-# add service role
-Add-ServiceRole $myapp -Name "MyAppService" -DeploymentGroup app `
+# add "Windows service" role
+Add-ServiceRole MyApp -Name "MyAppService" -DeploymentGroup app `
     -PackageUrl (Get-AppVeyorPackageUrl $applicationName $applicationVersion "HelloAppVeyor.Service") `
     -Configuration @{
         "ConnectionString.Default" = "server=locahost;"
     }
 
-# add custom deployment task
+# add Staging environment
+New-Environment Staging -Configuration @{
+    var1 = "value1"
+    var2 = "value2"
+}
+
+# add environment servers
+Add-EnvironmentServer Staging "test-ps2.cloudapp.net" -Port 51281 -DeploymentGroup web,app
+Add-EnvironmentServer Staging "test-ps1.cloudapp.net" -DeploymentGroup app
+Add-EnvironmentServer Staging "test-ps3.cloudapp.net" -DeploymentGroup app
+
+# setup custom deployment tasks
 Set-DeploymentTask remove-from-lb -Before deploy,restart -Application $myApp.Name {
     Write-Log "CUSTOM TASK: Remove machine from load balancer"
 }
@@ -64,45 +78,6 @@ Set-DeploymentTask task3 -After rollback -Application $applicationName -Version 
     Write-Log "task3: do something on EACH node of web deployment group after successful rollback from 1.2.0"
 }
 
-# describe Staging environment
-$staging = New-Environment -Name Staging -Configuration @{
-    var1 = "value1"
-    var2 = "value2"
-}
-Add-EnvironmentServer $staging "test-ps2.cloudapp.net" -Port 51281 -DeploymentGroup web,app
-Add-EnvironmentServer $staging "test-ps1.cloudapp.net" -DeploymentGroup app
-Add-EnvironmentServer $staging "test-ps3.cloudapp.net" -DeploymentGroup app
-
-#$staging = New-Environment -File (Join-Path $currentPath staging.json) -Credential $credential
-
-$local = New-Environment local
-Add-EnvironmentServer $local "localhost"
-
-# --------------------------------------------
-#
-#   Deploying tests
-#
-# --------------------------------------------
-
-Set-DeploymentTask setup:env -Requires setup:web,setup:app -PerGroup -DeploymentGroup app {
-    Write-Log "Setup environment for the first time: $($env:COMPUTERNAME)"
-
-    $a = 42
-    function Test()
-    {
-        Write-Log "Test!!!!"
-    }
-
-    $context.ServerDeploymentGroup
-
-    Invoke-DeploymentTask setup:web
-}
-
-Set-DeploymentTask setup:web {
-    Write-Log "Setup web group only"
-    Test
-    $a
-}
 
 #Invoke-DeploymentTask setup:env -On staging -Verbose
 
@@ -137,12 +112,5 @@ Remove-Deployment myapp -From staging -Verbose -Serial
 
 # start deployment
 #Start-Deployment $myapp -On $staging
-
-<#
-Events:
-    deploy
-    rollback
-    remove
-#>
 
 Remove-Module AppRoller
