@@ -1,7 +1,7 @@
 # import AppRoller
-Remove-Module AppRoller -ErrorAction SilentlyContinue
+Remove-Module AppRolla -ErrorAction SilentlyContinue
 $currentPath = Split-Path $myinvocation.mycommand.path
-Import-Module (Resolve-Path (Join-Path $currentPath  ..\AppRoller.psm1))
+Import-Module (Resolve-Path (Join-Path $currentPath  ..\AppRolla.psm1))
 
 $applicationName = "test-web"
 $applicationVersion = "1.0.7"
@@ -41,14 +41,14 @@ New-Application MyApp -Configuration @{
 }
 
 # add "Web site" role
-Add-WebSiteRole MyApp -Name "MyAppWebsite" -DeploymentGroup web `
+Add-WebSiteRole MyApp MyWebsite -DeploymentGroup web `
     -WebsiteName "test deploy" `
     -WebsitePort 8333 `
     -PackageUrl (Get-AppVeyorPackageUrl $applicationName $applicationVersion "HelloAppVeyor.Web") `
     -BasePath '$($env:SystemDrive)\websites\test-web'
 
 # add "Windows service" role
-Add-ServiceRole MyApp -Name "MyAppService" -DeploymentGroup app `
+Add-ServiceRole MyApp MyService -DeploymentGroup app `
     -PackageUrl (Get-AppVeyorPackageUrl $applicationName $applicationVersion "HelloAppVeyor.Service") `
     -Configuration @{
         "ConnectionString.Default" = "server=locahost;"
@@ -61,9 +61,9 @@ New-Environment Staging -Configuration @{
 }
 
 # add environment servers
-Add-EnvironmentServer Staging "test-ps2.cloudapp.net" -Port 51281 -DeploymentGroup web,app
-Add-EnvironmentServer Staging "test-ps1.cloudapp.net" -DeploymentGroup app
-Add-EnvironmentServer Staging "test-ps3.cloudapp.net" -DeploymentGroup app
+Add-EnvironmentServer Staging test-ps2.cloudapp.net -Port 51281 -DeploymentGroup web,app
+Add-EnvironmentServer Staging test-ps1.cloudapp.net -DeploymentGroup app
+Add-EnvironmentServer Staging test-ps3.cloudapp.net -DeploymentGroup app
 
 # setup custom deployment tasks
 Set-DeploymentTask remove-from-lb -Before deploy,restart -Application $myApp.Name {
@@ -113,4 +113,4 @@ Remove-Deployment myapp -From staging -Verbose -Serial
 # start deployment
 #Start-Deployment $myapp -On $staging
 
-Remove-Module AppRoller
+Remove-Module AppRolla

@@ -146,7 +146,7 @@ function Add-WebSiteRole
         [Parameter(Position=0, Mandatory=$true)]
         $ApplicationName,
 
-        [Parameter(Mandatory=$true)]
+        [Parameter(Position=1, Mandatory=$true)]
         [string]$Name,
 
         [Parameter(Mandatory=$false)]
@@ -214,7 +214,7 @@ function Add-ServiceRole
         [Parameter(Position=0, Mandatory=$true)]
         $ApplicationName,
 
-        [Parameter(Mandatory=$true)]
+        [Parameter(Position=1, Mandatory=$true)]
         [string]$Name,
 
         [Parameter(Mandatory=$false)]
