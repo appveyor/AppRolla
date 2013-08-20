@@ -7,7 +7,7 @@ AppRolla can be used as utility for executing commands in parallel on multiple m
 AppRolla was inspired by Capistrano - a super popular deployment framework from Linux world. Though initial motivation to build AppRolla was having easy to use deployment framework as part of [AppVeyor Continuous Integration](http://www.appveyor.com) pipeline after starting the project it became clear AppRolla could be used in any build automation script or interactively from command line.
 
 
-### Basic example
+### Example
 Provided AppRolla module is already installed (more on this later) the code below performs the deployment of sample project consisting of **ASP.NET web application** (front-end) and **Windows service** (back-end) to production environment with 2 web (front-end) servers and 2 application (back-end) servers:
 
 ```posh
@@ -49,7 +49,7 @@ New-Deployment MyApp 1.0.0 -To Production
 
 - AppRolla does not build application. It must be pre-built, pre-published (if it's web application project) and zipped. Use [AppVeyor](http://www.appveyor.com) to build your application and store artifacts in a cloud.
 - AppRolla does not upload or push application packages to remote machines. Packages must be uploaded to any external location accessible from remote servers.
-- AppRolla uses remote PowerShell. No agent installation required. We prepared [complete guide on how to setup remote PowerShell](http://link).
+- AppRolla uses remote PowerShell. No agent installation required. We prepared [complete guide on how to setup PowerShell remoting](/AppVeyor/AppRolla/wiki/Configuring-Windows-PowerShell-remoting).
 - AppRolla is a *deployment* solution, not a *release management* with deployment workflow and security. Though AppRolla can rollback, remove and restart deployments it is basically “point and shoot” tool.
 
 
@@ -333,13 +333,13 @@ Restart-Deployment MyApp -On Staging
 ```
 
 
-#### Remote PowerShell
+#### PowerShell remoting
 
 AppRolla uses remote PowerShell to run deployment tasks on remote servers. By relying on remote PowerShell technology we are strongly commited to provide you all required information on how to get started saving you hours of crawling the internet and find the answers.
 
-Read [complete guide on how to setup remote PowerShell](http://link). In that article you will know how to issue correct SSL certificate that could be used to setup WinRM HTTPS listener, install SSL certificate on remote machine, enable remote PowerShell and configure firewall.
+Read [complete guide on how to setup PowerShell remoting](/AppVeyor/AppRolla/wiki/Configuring-Windows-PowerShell-remoting). In that article you will know how to issue correct SSL certificate that could be used to setup WinRM HTTPS listener, install SSL certificate on remote machine, enable remote PowerShell and configure firewall.
 
-##### Configuring remote PowerShell settings
+##### Configuring PowerShell remoting settings
 
 By default, AppRolla will try to connect remote environment server via HTTPS on port 5986. To change default communication protocol to HTTP on port 5985 update this global setting:
 
