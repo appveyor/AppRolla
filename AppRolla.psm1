@@ -611,6 +611,7 @@ function Invoke-DeploymentTask
                 DeploymentGroup = $server.DeploymentGroup                
             }
             Environment = @{
+                Name = $environment.Name
                 Configuration = $environment.Configuration
             }
             Tasks = $serverTasks.Tasks

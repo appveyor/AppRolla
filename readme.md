@@ -8,7 +8,7 @@ AppRolla was inspired by Capistrano - a super popular deployment framework from 
 
 
 ### Example
-Provided AppRolla module is already installed (more on this later) the code below performs the deployment of sample project consisting of **ASP.NET web application** (front-end) and **Windows service** (back-end) to production environment with 2 web (front-end) servers and 2 application (back-end) servers:
+The script below performs the deployment of sample project consisting of **ASP.NET web application** (front-end) and **Windows service** (back-end) to "staging" environment with one server and then to "production" environment with 2 web (front-end) servers and 2 application (back-end) servers:
 
 ```posh
 Import-Module AppRolla
@@ -20,13 +20,14 @@ Add-ServiceRole MyApp MyService -PackageUrl "http://www.site.com/packages/myapp.
 
 # Staging environment
 New-Environment Staging
-Add-EnvironmentServer Staging "staging-server"
+Add-EnvironmentServer Staging staging-server
 
 # Production environment
 New-Environment Production
 Add-EnvironmentServer Production web1.hostname.com -DeploymentGroup web
 Add-EnvironmentServer Production web2.hostname.com -DeploymentGroup web
 Add-EnvironmentServer Production app1.hostname.com -DeploymentGroup app
+Add-EnvironmentServer Production app2.hostname.com -DeploymentGroup app
 
 # deploy to Staging
 New-Deployment MyApp 1.0.0 -To Staging
