@@ -49,19 +49,68 @@ New-Deployment MyApp 1.0.0 -To Production
 
 - AppRolla does not build application. It must be pre-built, pre-published (if it's web application project) and zipped. Use [AppVeyor](http://www.appveyor.com) to build your application and store artifacts in a cloud.
 - AppRolla does not upload or push application packages to remote machines. Packages must be uploaded to any external location accessible from remote servers.
-- AppRolla uses remote PowerShell. No agent installation required. We prepared [complete guide on how to setup PowerShell remoting](/AppVeyor/AppRolla/wiki/Configuring-Windows-PowerShell-remoting).
+- AppRolla uses remote PowerShell. No agent installation required. We prepared [complete guide on how to setup PowerShell remoting](https://github.com/AppVeyor/AppRolla/wiki/Configuring-Windows-PowerShell-remoting).
 - AppRolla is a *deployment* solution, not a *release management* with deployment workflow and security. Though AppRolla can rollback, remove and restart deployments it is basically “point and shoot” tool.
 
 
 ### Installing AppRolla
 
-- downloading module
-- how to organize scripts to use it interactively or as part of build process
+Download [`AppRolla.psm1`](https://github.com/AppVeyor/AppRolla/blob/master/AppRolla.psm1) file. You can put this file just to the directory where you plan to have all your deployment scripts.
 
-- how to use it interactively
-- how to use it as part of build process
+If you want to install AppRolla globally for your account create new `AppRolla` folder inside `$Home\Documents\WindowsPowerShell\Modules` and put `AppRolla.psm1` into it.
 
+Create a new "configuration" script named [`config.ps1`](https://github.com/AppVeyor/AppRolla/blob/master/config.ps1) where you describe your application and environments. You can use this template for your own config:
 
+```posh
+# import AppRoller module
+Remove-Module AppRolla -ErrorAction SilentlyContinue
+$scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Definition
+Import-Module (Join-Path $scriptPath AppRolla.psm1)
+
+# add application and roles
+New-Application MyApp
+
+Add-WebSiteRole MyApp MyWebsite -DeploymentGroup web `
+    -PackageUrl "http://my-storage.com/website-package.zip"
+
+Add-ServiceRole MyApp MyService -DeploymentGroup app `
+    -PackageUrl "http://my-storage.com/service-package.zip"
+
+# define Staging environment
+New-Environment Staging
+Add-EnvironmentServer Staging "staging.server.com"
+
+# define Production environment
+New-Environment Production
+Add-EnvironmentServer Production "web.server.com" -DeploymentGroup web
+Add-EnvironmentServer Production "app.server.com" -DeploymentGroup app
+
+```
+
+Now, if want to use AppRolla interactively you just open PowerShell console in the directory with your scripts and load configuration:
+
+```posh
+PS> .\config.ps1
+```
+
+`config.ps1` script will load AppRolla module and add application and environments to the current session.
+
+Now you can just run AppRolla cmdlets from PowerShell command line, for example:
+
+```posh
+PS> New-Deployment MyApp 1.0.0 -To Staging
+```
+
+If you are going to use AppRolla in your continuous integration environment add [`deploy.ps1`](https://github.com/AppVeyor/AppRolla/blob/master/deploy.ps1) script performing application deployment and using configuration from `config.ps1`:
+
+```posh
+# load configuration script
+$path = Split-Path -Parent $MyInvocation.MyCommand.Definition
+. (Join-Path $path config.ps1)
+
+# deploy to Staging
+New-Deployment MyApp 1.0.0 -To Staging
+```
 
 ### Using AppRolla
 
@@ -337,7 +386,7 @@ Restart-Deployment MyApp -On Staging
 
 AppRolla uses remote PowerShell to run deployment tasks on remote servers. By relying on remote PowerShell technology we are strongly commited to provide you all required information on how to get started saving you hours of crawling the internet and find the answers.
 
-Read [complete guide on how to setup PowerShell remoting](/AppVeyor/AppRolla/wiki/Configuring-Windows-PowerShell-remoting). In that article you will know how to issue correct SSL certificate that could be used to setup WinRM HTTPS listener, install SSL certificate on remote machine, enable remote PowerShell and configure firewall.
+Read [complete guide on how to setup PowerShell remoting](https://github.com/AppVeyor/AppRolla/wiki/Configuring-Windows-PowerShell-remoting). In that article you will know how to issue correct SSL certificate that could be used to setup WinRM HTTPS listener, install SSL certificate on remote machine, enable remote PowerShell and configure firewall.
 
 ##### Configuring PowerShell remoting settings
 
@@ -358,7 +407,7 @@ Add-EnvironmentServer Staging web1.hostname.com -Port 51434 ...
 
 To connect remote server that is not a member of the same AD domain you should provide user account credentials (username/password). How to securely store those credentials and pass them to AppRolla?
 
-When using AppRolla interractively from your development machine the best way to store servers credentials is **Windows Credential Manager**. You find Credential Manager by searching for "credential" in Control Panel. You should add **Windows credentials** for each server you are going to deploy to.
+When using AppRolla interactively from your development machine the best way to store servers credentials is **Windows Credential Manager**. You find Credential Manager by searching for "credential" in Control Panel. You should add **Windows credentials** for each server you are going to deploy to.
 
 What if you are deploying to a very large environment with dozens of servers and want to use the same username/password to connect them. You can specify credentials for the entire environment using `-Credential` parameter when adding environment. For example, using the code below you will be asked to type "Administrator" account password every time you deploy:
 
