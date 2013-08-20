@@ -6,7 +6,7 @@ Import-Module (Resolve-Path (Join-Path $currentPath  ..\AppRolla.psm1))
 $applicationName = "test-web"
 $applicationVersion = "1.0.7"
 
-$secureData = Get-ItemProperty -Path "HKLM:SOFTWARE\AppRoller\Tests"
+$secureData = Get-ItemProperty -Path "HKCU:SOFTWARE\AppRolla\Tests"
 $adminUsername = $secureData.adminUsername
 $adminPassword = $secureData.adminPassword
 
@@ -15,6 +15,7 @@ $credential = New-Object System.Management.Automation.PSCredential $adminUsernam
 
 # set global deployment configuration
 Set-DeploymentConfiguration TaskExecutionTimeout 60 # 1 min
+
 
 #Set-DeploymentConfiguration UseSSL $false
 #Set-DeploymentConfiguration SkipCACheck $false
@@ -79,7 +80,12 @@ Set-DeploymentTask task3 -After rollback -Application $applicationName -Version 
 }
 
 
-#Invoke-DeploymentTask setup:env -On staging -Verbose
+
+Set-DeploymentTask hello -DeploymentGroup web,app {
+    Write-Output "Hello from $($env:COMPUTERNAME)!"
+}
+
+#Invoke-DeploymentTask hello -On staging -Serial -Verbose
 
 # perform deployment to staging
 #New-Deployment myapp 1.0.0 -To staging -Verbose #-Serial
@@ -89,7 +95,7 @@ Set-DeploymentTask task3 -After rollback -Application $applicationName -Version 
 
 #New-Deployment myapp 1.0.0 -To local -Verbose -Serial
 
-Remove-Deployment myapp -From staging -Verbose -Serial
+#Remove-Deployment myapp -From staging -Verbose -Serial
 
 #Restore-Deployment myapp -On local
 #Restore-Deployment myapp -On staging

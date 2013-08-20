@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Version: 1.0
+
 # config
 $config = @{}
 $config.TaskExecutionTimeout = 300 # 5 min
@@ -489,7 +491,7 @@ function Invoke-DeploymentTask
         [string]$version,
         
         [Parameter(Mandatory=$false)]
-        $serial = $false
+        [switch]$Serial = $false
     )
 
     if($application -ne $null -and $application -is [string])
@@ -916,7 +918,7 @@ function New-Deployment
         [switch]$Serial = $false
     )
 
-    Invoke-DeploymentTask deploy $environment $application $version -serial $serial
+    Invoke-DeploymentTask deploy $environment $application $version -Serial:$serial
 }
 
 function Remove-Deployment
@@ -937,7 +939,7 @@ function Remove-Deployment
         [switch]$Serial = $false
     )
 
-    Invoke-DeploymentTask remove $environment $application $version -serial $serial
+    Invoke-DeploymentTask remove $environment $application $version -Serial:$serial
 }
 
 function Restore-Deployment
@@ -958,7 +960,7 @@ function Restore-Deployment
         [switch]$Serial = $false
     )
 
-    Invoke-DeploymentTask rollback $environment $application $version -serial $serial
+    Invoke-DeploymentTask rollback $environment $application $version -Serial:$serial
 }
 
 function Restart-Deployment
@@ -976,7 +978,7 @@ function Restart-Deployment
         [switch]$Serial = $false
     )
 
-    Invoke-DeploymentTask restart $environment $application -serial $serial
+    Invoke-DeploymentTask restart $environment $application -Serial:$serial
 }
 
 function Stop-Deployment
@@ -994,7 +996,7 @@ function Stop-Deployment
         [switch]$Serial = $false
     )
 
-    Invoke-DeploymentTask stop $environment $application -serial $serial
+    Invoke-DeploymentTask stop $environment $application -Serial:$serial
 }
 
 function Start-Deployment
@@ -1012,7 +1014,7 @@ function Start-Deployment
         [switch]$Serial = $false
     )
 
-    Invoke-DeploymentTask start $environment $application -serial $serial
+    Invoke-DeploymentTask start $environment $application -Serial:$serial
 }
 #endregion
 
@@ -1312,6 +1314,14 @@ Set-DeploymentTask deploy -Requires setup-role-folder,download-package,deploy-we
     {
         if(Test-RoleApplicableToServer $role)
         {
+            # determine the location of application folder
+            Invoke-DeploymentTask setup-role-folder
+
+            # $role.BasePath - base path for role versions
+            # $role.RootPath - role version installation root (application root)
+            # $role.Versions - the list of installed versions (latest first)
+
+            # invoke role specific deployment code
             Invoke-DeploymentTask "deploy-$($role.Type)"
 
             # delete previous versions
@@ -1332,13 +1342,6 @@ Set-DeploymentTask deploy-website {
     Write-Log "Deploying website $($role.Name)"
 
     Import-Module WebAdministration
-
-    # determine the location of application folder
-    Invoke-DeploymentTask setup-role-folder
-
-    # $role.BasePath - base path for role versions
-    # $role.RootPath - role version installation root (application root)
-    # $role.Versions - the list of installed versions (latest first)
 
     # ... and make sure the folder does not exists
     if(Test-Path $role.RootPath)
@@ -1447,13 +1450,6 @@ Set-DeploymentTask deploy-website {
 
 Set-DeploymentTask deploy-service {
     Write-Log "Deploying Windows service $($role.Name)"
-
-    # determine the location of application folder
-    Invoke-DeploymentTask setup-role-folder
-
-    # $role.BasePath - base path for role versions
-    # $role.RootPath - role version installation root (application root)
-    # $role.Versions - the list of installed versions (latest first)
 
     # ... and make sure the folder does not exists
     if(Test-Path $role.RootPath)
