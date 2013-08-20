@@ -11,28 +11,28 @@ AppRolla was inspired by Capistrano - a super popular deployment framework from 
 Provided AppRolla module is already installed (more on this later) the code below performs the deployment of sample project consisting of **ASP.NET web application** (front-end) and **Windows service** (back-end) to production environment with 2 web (front-end) servers and 2 application (back-end) servers:
 
 ```posh
-	Import-Module AppRolla
+Import-Module AppRolla
 
-	# describe application
-	New-Application MyApp
-	Add-WebsiteRole MyApp MyWebsite -PackageUrl "http://www.site.com/packages/myapp.web.zip"
-    Add-ServiceRole MyApp MyService -PackageUrl "http://www.site.com/packages/myapp.service.zip"
+# describe application
+New-Application MyApp
+Add-WebsiteRole MyApp MyWebsite -PackageUrl "http://www.site.com/packages/myapp.web.zip"
+Add-ServiceRole MyApp MyService -PackageUrl "http://www.site.com/packages/myapp.service.zip"
 
-    # Staging environment
-    New-Environment Staging
-    Add-EnvironmentServer Staging "staging-server"
+# Staging environment
+New-Environment Staging
+Add-EnvironmentServer Staging "staging-server"
 
-	# Production environment
-    New-Environment Production
-    Add-EnvironmentServer Production web1.hostname.com -DeploymentGroup web
-    Add-EnvironmentServer Production web2.hostname.com -DeploymentGroup web
-    Add-EnvironmentServer Production app1.hostname.com -DeploymentGroup app
+# Production environment
+New-Environment Production
+Add-EnvironmentServer Production web1.hostname.com -DeploymentGroup web
+Add-EnvironmentServer Production web2.hostname.com -DeploymentGroup web
+Add-EnvironmentServer Production app1.hostname.com -DeploymentGroup app
 
-	# deploy to Staging
-    New-Deployment MyApp 1.0.0 -To Staging
+# deploy to Staging
+New-Deployment MyApp 1.0.0 -To Staging
 
-	# deploy to Production
-    New-Deployment MyApp 1.0.0 -To Production
+# deploy to Production
+New-Deployment MyApp 1.0.0 -To Production
 ```
 
 ### Features and benefits
@@ -80,44 +80,44 @@ Each role should have a corresponding package with application files. Package is
 
 To add a new application:
 
-    ```posh
-	New-Application MyApp
-	```
+```posh
+New-Application MyApp
+```
 
 To add website role to the application:
 
-    ```posh
-	Add-WebsiteRole MyApp MyWebsite -PackageUrl "http://www.site.com/packages/myapp.web.zip"
-	```	
+```posh
+Add-WebsiteRole MyApp MyWebsite -PackageUrl "http://www.site.com/packages/myapp.web.zip"
+```	
 
 Be default, website role is deployed to "Defaul Web Site" which is cool if you plan to have only one web application running on the target server. However, if you need to create a new IIS web site you can specify its details when adding role:
 
-    ```posh
-	Add-WebsiteRole MyApp MyWebsite `
-		  -PackageUrl "http://www.site.com/packages/myapp.web.zip"
-		  -WebsiteName "MyWebsite" `
-		  -WebsiteProtocol http `
-		  -WebsiteHost www.mywebsite.com
-		  -WebsitePort 8088
-		  -WebsiteIP *
-	```
+```posh
+Add-WebsiteRole MyApp MyWebsite `
+	  -PackageUrl "http://www.site.com/packages/myapp.web.zip"
+	  -WebsiteName "MyWebsite" `
+	  -WebsiteProtocol http `
+	  -WebsiteHost www.mywebsite.com
+	  -WebsitePort 8088
+	  -WebsiteIP *
+```
 
 To add service role:
 
-    ```posh
-	Add-ServiceRole MyApp MyService -PackageUrl "http://www.site.com/packages/myapp.service.zip"
-	```	
+```posh
+Add-ServiceRole MyApp MyService -PackageUrl "http://www.site.com/packages/myapp.service.zip"
+```
 
 By default, a Windows service will use the first .exe file found in the package, have service name and service display name equal to the role name ("MyService" in our case). If you have more than one .exe in the package or want to customize Windows service details you can use extended `Add-ServiceRole` syntax:
 
-    ```posh
-	Add-ServiceRole MyApp MyService `
-		  -PackageUrl "http://www.site.com/packages/myapp.service.zip"
-		  -ServiceExecutable "myservice.exe" `
-		  -ServiceName "myapp.myservice" `
-		  -ServiceDisplayName "My app service"
-		  -ServiceDescription "The service for hosting WCF back-end of my application."
-	```
+```posh
+Add-ServiceRole MyApp MyService `
+	  -PackageUrl "http://www.site.com/packages/myapp.service.zip"
+	  -ServiceExecutable "myservice.exe" `
+	  -ServiceName "myapp.myservice" `
+	  -ServiceDisplayName "My app service"
+	  -ServiceDescription "The service for hosting WCF back-end of my application."
+```
 
 #### Describe your environments
 
@@ -125,12 +125,12 @@ Application is deployed to *environment*. Environment has a name and could inclu
 
 To add a new "staging: environment with two web servers and one application server:
 
-    ```posh
-    New-Environment Staging
-    Add-EnvironmentServer Staging web1.hostname.com -DeploymentGroup web
-    Add-EnvironmentServer Staging web2.hostname.com -DeploymentGroup web
-    Add-EnvironmentServer Staging app1.hostname.com -DeploymentGroup app
-    ```
+```posh
+New-Environment Staging
+Add-EnvironmentServer Staging web1.hostname.com -DeploymentGroup web
+Add-EnvironmentServer Staging web2.hostname.com -DeploymentGroup web
+Add-EnvironmentServer Staging app1.hostname.com -DeploymentGroup app
+```
 
 
 ##### What is deployment group?
@@ -141,34 +141,34 @@ For example, we have an application consisting of web application and a Windows 
 
 First, we apply `DeploymentGroup` when adding website and service roles. Our example above could be extended as:
 
-    ```posh
-	Add-WebsiteRole MyApp MyWebsite -DeploymentGroup web ...
-	Add-ServiceRole MyApp MyService -DeploymentGroup app ...
-	```
+```posh
+Add-WebsiteRole MyApp MyWebsite -DeploymentGroup web ...
+Add-ServiceRole MyApp MyService -DeploymentGroup app ...
+```
 
 Application role could belong to zero or one deployment group only. If a role doesn't have deployment group specified it will be deployed to all servers. `DeploymentGroup` is an arbitrary string and you can use your own naming conventions.
 
 Each environment server could belong to zero or many deployment groups. If server deployment group is not specified all application roles will be deployed to it. For example:
 
-    ```posh
-    # this server accepts roles of "web" group only
-    Add-EnvironmentServer Staging web1.hostname.com -DeploymentGroup web
+```posh
+# this server accepts roles of "web" group only
+Add-EnvironmentServer Staging web1.hostname.com -DeploymentGroup web
 
-    # this server accepts roles of "web" and "app" groups
-    Add-EnvironmentServer Staging srv1.hostname.com -DeploymentGroup web,app
+# this server accepts roles of "web" and "app" groups
+Add-EnvironmentServer Staging srv1.hostname.com -DeploymentGroup web,app
 
-    # this server accepts roles of all groups
-    Add-EnvironmentServer Staging srv2.hostname.com
-    ```
+# this server accepts roles of all groups
+Add-EnvironmentServer Staging srv2.hostname.com
+```
 
 
 #### Deploying application
 
 To deploy application to "staging" environment use the following command:
 
-	```posh
-    New-Deployment MyApp 1.0.0 -To Staging
-	```
+```posh
+New-Deployment MyApp 1.0.0 -To Staging
+```
 
 This command will create a new "1.0.0" deployment of "MyApp" application on "Staging" environment servers. Website role will be deployed to `web1.hostname.com` and `web2.hostname.com` servers and service role to `app1.hostname.com`.
 
@@ -179,9 +179,9 @@ This command will create a new "1.0.0" deployment of "MyApp" application on "Sta
 
 By default, AppRolla deployment tasks are executed on all environment servers in parallel. However, in some cases you might want to run a script server-by-server. For example, you may have a custom task extension removing web node from load balancer before deployment and adding it back after it. To run deployment task server-by-server use `Serial` switch:
 
-	```posh
-    New-Deployment MyApp 1.0.0 -To Staging -Serial
-	```
+```posh
+New-Deployment MyApp 1.0.0 -To Staging -Serial
+```
 
 
 ##### Deployment directory structure
@@ -194,49 +194,49 @@ Each application role deployment creates a new directory on remote server:
 
 for example, deploying version 1.0.0 of our sample application with two roles to a single-server staging environment will create the following directory structure:
 
-    ```posh
-    c:\applications\MyApp\
-    c:\applications\MyApp\MyWebsite
-    c:\applications\MyApp\MyWebsite\1.0.0
-    c:\applications\MyApp\MyService
-    c:\applications\MyApp\MyService\1.0.0
-    ```
+```posh
+c:\applications\MyApp\
+c:\applications\MyApp\MyWebsite
+c:\applications\MyApp\MyWebsite\1.0.0
+c:\applications\MyApp\MyService
+c:\applications\MyApp\MyService\1.0.0
+```
 
 After deploying of another 1.0.1 version we will have this sctructure:
 
-    ```posh
-    c:\applications\MyApp\
-    c:\applications\MyApp\MyWebsite
-    c:\applications\MyApp\MyWebsite\1.0.0
-    c:\applications\MyApp\MyWebsite\1.0.1   # "current" deployment
-    c:\applications\MyApp\MyService
-    c:\applications\MyApp\MyService\1.0.0
-    c:\applications\MyApp\MyService\1.0.1   # "current" deployment
-    ```
+```posh
+c:\applications\MyApp\
+c:\applications\MyApp\MyWebsite
+c:\applications\MyApp\MyWebsite\1.0.0
+c:\applications\MyApp\MyWebsite\1.0.1   # "current" deployment
+c:\applications\MyApp\MyService
+c:\applications\MyApp\MyService\1.0.0
+c:\applications\MyApp\MyService\1.0.1   # "current" deployment
+```
 
 Website root folder and Windows service executable path will be changed to a new path.
 
 To change a base path for all deployments globally use this command:
 
-    ```posh
-    Set-DeploymentConfiguration ApplicationsPath 'c:\myapps'
-    ```
+```posh
+Set-DeploymentConfiguration ApplicationsPath 'c:\myapps'
+```
 
 You can use environment variables in the path to be resolved on remote server. Path must be set in a **single quotes** then:
 
-    ```posh
-    Set-DeploymentConfiguration ApplicationsPath '$($env:SystemDrive)\myapps'
-    ```
+```posh
+Set-DeploymentConfiguration ApplicationsPath '$($env:SystemDrive)\myapps'
+```
 
 To set a base path on role level use `BasePath` parameter when adding a role:
 
-    ```posh
-    # to deploy website to c:\websites\<deployment_name> directory
-    Add-WebsiteRole MyApp MyWebsite -BasePath 'c:\websites' ...
+```posh
+# to deploy website to c:\websites\<deployment_name> directory
+Add-WebsiteRole MyApp MyWebsite -BasePath 'c:\websites' ...
 
-    # to deploy Windows service to Program Files directory
-    Add-ServiceRole MyApp MyService -BasePath '$($env:ProgramFiles)\MyService' ...
-    ```
+# to deploy Windows service to Program Files directory
+Add-ServiceRole MyApp MyService -BasePath '$($env:ProgramFiles)\MyService' ...
+```
 
 ##### How to deploy locally?
 
@@ -244,17 +244,17 @@ AppRolla allows running deployment tasks locally. This is useful for development
 
 To deploy locally use built-in "local" environment:
 
-	```posh
-    New-Deployment MyApp 1.0.0 -To local
-	```
+```posh
+New-Deployment MyApp 1.0.0 -To local
+```
 
 This environment has only one "localhost" server. If you need to deploy to local machine as part of your own environment (it's really hard to figure out a real use-case, but anyway :) add a server with reserved "localhost" name:
 
-    ```posh
-    New-Environment Dev
-    ...
-    Add-EnvironmentServer Dev localhost
-    ```
+```posh
+New-Environment Dev
+...
+Add-EnvironmentServer Dev localhost
+```
 
 ##### How to update application configuration files?
 
@@ -262,15 +262,15 @@ AppRolla can update configuration settings in `appSettings` and `connectionStrin
 
 Specify configuration settings in the format `appSettings.<key>` or `connectionString.<name>` to update keys in corresponding sections while adding a role:
 
-    ```posh
-    Add-WebsiteRole MyApp MyWebsite ... -Configuration {
-      "appSettings.SiteUrl" = "http://www.mysite.com"
-    }
+```posh
+Add-WebsiteRole MyApp MyWebsite ... -Configuration {
+  "appSettings.SiteUrl" = "http://www.mysite.com"
+}
 
-    Add-ServiceRole MyApp MyWebsite ... -Configuration {
-      "connectionString.Default" = "server=locahost; ..."
-    }
-    ```
+Add-ServiceRole MyApp MyWebsite ... -Configuration {
+  "connectionString.Default" = "server=locahost; ..."
+}
+```
 
 #### Rollback deployment
 
@@ -278,21 +278,21 @@ What if you did a mistake and accidentially deployed a broken release (it could 
 
 You can rollback deployment to a previous release by this command:
 
-    ```posh
-    Restore-Deployment MyApp -On Production
-    ```
+```posh
+Restore-Deployment MyApp -On Production
+```
 
 To rollback to a specific version:
 
-    ```posh
-    Restore-Deployment MyApp 1.0.0 -On Production
-    ```
+```posh
+Restore-Deployment MyApp 1.0.0 -On Production
+```
 
 By default, AppRolla stores 5 previous releases on remote servers, but you can change this number by modifying the following setting:
 
-    ```posh
-    Set-DeploymentConfiguration KeepPreviousVersions 10
-    ```
+```posh
+Set-DeploymentConfiguration KeepPreviousVersions 10
+```
 
 During the rollback AppRolla switches websites and Windows services to new directories and deletes current release directories.
 
@@ -300,15 +300,15 @@ During the rollback AppRolla switches websites and Windows services to new direc
 
 To delete specific (previous as you cannot delete current deployment) application deployment use the following command:
 
-    ```posh
-    Remove-Deployment MyApp 1.0.0 -From Staging
-    ```
+```posh
+Remove-Deployment MyApp 1.0.0 -From Staging
+```
 
 To delete all application deployments ommit version parameter:
 
-    ```posh
-    Remove-Deployment MyApp -From Staging
-    ```
+```posh
+Remove-Deployment MyApp -From Staging
+```
 
 #### Start/Stop/Restart deployed application
 
@@ -316,21 +316,21 @@ When you start/stop/restart application on specific environment its role IIS web
 
 To stop application:
 
-    ```posh
-    Stop-Deployment MyApp -On Staging
-    ```
+```posh
+Stop-Deployment MyApp -On Staging
+```
 
 To start application:
 
-    ```posh
-    Start-Deployment MyApp -On Staging
-    ```
+```posh
+Start-Deployment MyApp -On Staging
+```
 
 To restart application:
 
-    ```posh
-    Restart-Deployment MyApp -On Staging
-    ```
+```posh
+Restart-Deployment MyApp -On Staging
+```
 
 
 #### Remote PowerShell
@@ -343,15 +343,17 @@ Read [complete guide on how to setup remote PowerShell](http://link). In that ar
 
 By default, AppRolla will try to connect remote environment server via HTTPS on port 5986. To change default communication protocol to HTTP on port 5985 update this global setting:
 
-    ```posh
-    Set-DeploymentConfiguration UseSSL $false
-    ```
+```posh
+Set-DeploymentConfiguration UseSSL $false
+```
 
 To set a custom port for each environment server use `-Port` parameter when adding a server:
 
-    ```posh
-    Add-EnvironmentServer Staging web1.hostname.com -Port 51434 ...
-    ```
+```posh
+Add-EnvironmentServer Staging web1.hostname.com -Port 51434 ...
+```
+
+
 ##### Authenticating remote PowerShell sessions
 
 To connect remote server that is not a member of the same AD domain you should provide user account credentials (username/password). How to securely store those credentials and pass them to AppRolla?
@@ -360,31 +362,31 @@ When using AppRolla interractively from your development machine the best way to
 
 What if you are deploying to a very large environment with dozens of servers and want to use the same username/password to connect them. You can specify credentials for the entire environment using `-Credential` parameter when adding environment. For example, using the code below you will be asked to type "Administrator" account password every time you deploy:
 
-    ```posh
-    $cred = Get-Credential -UserName Administrator
-    New-Environment Staging -Credential $cred
-    ```
+```posh
+$cred = Get-Credential -UserName Administrator
+New-Environment Staging -Credential $cred
+```
 
 If you don't want to type a password every time you can store it in the registry and then create credentials object like that:
 
-    ```posh
-    $secureData = Get-ItemProperty -Path "HKCU:SOFTWARE\AppRolla\Tests" # your path here
-    $adminUsername = $secureData.adminUsername  # your key here
-    $adminPassword = $secureData.adminPassword  # your key here
-    $securePassword = ConvertTo-SecureString $adminPassword -AsPlainText -Force
-    $credential = New-Object System.Management.Automation.PSCredential $adminUsername, $securePassword
+```posh
+$secureData = Get-ItemProperty -Path "HKCU:SOFTWARE\AppRolla\Tests" # your path here
+$adminUsername = $secureData.adminUsername  # your key here
+$adminPassword = $secureData.adminPassword  # your key here
+$securePassword = ConvertTo-SecureString $adminPassword -AsPlainText -Force
+$credential = New-Object System.Management.Automation.PSCredential $adminUsername, $securePassword
 
-    New-Environment Staging -Credential $cred
-    ```
+New-Environment Staging -Credential $cred
+```
 
 Storing any settings in the registry will ensure you don't check-in sensitive information in source control and also allows every developer of your team to use their own settings.
 
 You can also set credentials for each server individually:
 
-    ```posh
-    New-Environment Staging
-	Add-EnvironmentServer Staging web1.hostname.com -Credential $cred ...
-    ```
+```posh
+New-Environment Staging
+Add-EnvironmentServer Staging web1.hostname.com -Credential $cred ...
+```
 
 
 ### Custom tasks
@@ -395,11 +397,11 @@ By implementing tasks you can extend existing functionality or add a completely 
 
 OK, let's say we want to do something *before* application deployment on each environment server. The task could look like:
 
-    ```posh
-    Set-DeploymentTask mytask1 -Before deploy {
-       # this code runs on every environment server BEFORE deployment
-    }
-    ```
+```posh
+Set-DeploymentTask mytask1 -Before deploy {
+   # this code runs on every environment server BEFORE deployment
+}
+```
 
 #### Extending existing tasks
 
@@ -420,71 +422,71 @@ AppRolla defines the following standard tasks:
 
 For example, to have a custom task doing something *after* deployment use `-After` parameter:
 
-    ```posh
-    Set-DeploymentTask mytask2 -After deploy {
-       # this code runs on every environment server AFTER deployment
-    }
-    ```
+```posh
+Set-DeploymentTask mytask2 -After deploy {
+   # this code runs on every environment server AFTER deployment
+}
+```
 
 You can combine both `-Before` and `-After` for the same task. Also, you can specify multiple dependent tasks, like that:
 
-    ```posh
-    Set-DeploymentTask mytask3 -Before deploy -After deploy,rollback {
-       # this code runs on every environment server BEFORE deployment and AFTER deployment or rollback
-    }
-    ```
+```posh
+Set-DeploymentTask mytask3 -Before deploy -After deploy,rollback {
+   # this code runs on every environment server BEFORE deployment and AFTER deployment or rollback
+}
+```
 
 #### Applying task to specific deployment groups
 To apply the task to specific deployment groups only use `-DeploymentGroup` parameter:
 
-    ```posh
-    Set-DeploymentTask mytask4 -Before deploy -DeploymentGroup web {
-       # this code runs on environment servers of 'web' group only BEFORE deployment
-    }
-    ```
+```posh
+Set-DeploymentTask mytask4 -Before deploy -DeploymentGroup web {
+   # this code runs on environment servers of 'web' group only BEFORE deployment
+}
+```
 
 Sometimes, you have to execute some code once per group, for example to setup an application SQL Server database. Obviously, running database setup scripts on *every* server will cause racing condition and won't work. To run task once per group use `-PerGroup` parameter:
 
-    ```posh
-    Set-DeploymentTask setup-db -Before deploy -DeploymentGroup web -PerGroup {
-       # setup application database here
-       # this code will run on a single server from 'web' deployment group
-    }
-    ```
+```posh
+Set-DeploymentTask setup-db -Before deploy -DeploymentGroup web -PerGroup {
+   # setup application database here
+   # this code will run on a single server from 'web' deployment group
+}
+```
 
 Oh, suppose we have to deploy an application to a load-balanced web cluster. Usually, we want to deploy node-by-node with removing a node from load balancing before deployment and adding it back when deployment is finished. How do we do that? Every *-Deployment cmdlet has `-Serial` switch to execute a task no in parallel, but server-by-server. To deploy to load balanced cluster you could use the following skeleton:
 
-    ```posh
-    Set-DeploymentTask remove-from-lb -Before deploy -DeploymentGroup web {
-       # code to remove current node from load balancer
-    }
+```posh
+Set-DeploymentTask remove-from-lb -Before deploy -DeploymentGroup web {
+   # code to remove current node from load balancer
+}
 
-    Set-DeploymentTask add-to-lb -After deploy -DeploymentGroup web {
-       # code to add current node to load balancer
-    }
+Set-DeploymentTask add-to-lb -After deploy -DeploymentGroup web {
+   # code to add current node to load balancer
+}
 
-    New-Deployment MyApp 1.0.0 -To Production -Serial        # run script server-by-server
-    ```
+New-Deployment MyApp 1.0.0 -To Production -Serial        # run script server-by-server
+```
 
 
 #### Applying task to a specific application
 
 To define a task specific for some application or even version use `-Application` and `-Version` parameters:
 
-    ```posh
-    Set-DeploymentTask myapp-specific-task -Before deploy -Application MyApp -Version 1.0.0 {
-       # do something here
-    }
-    ```
+```posh
+Set-DeploymentTask myapp-specific-task -Before deploy -Application MyApp -Version 1.0.0 {
+   # do something here
+}
+```
 
 Another cool example - running some compensation code against application database while rolling back *from* version 1.1.0:
 
-    ```posh
-    Set-DeploymentTask rollback-db -After rollback -Application MyApp -Version 1.1.0 -PerGroup {
-       # this code will run only once per environment
-       # when rolling back MyApp application from 1.1.0 version
-    }
-    ```
+```posh
+Set-DeploymentTask rollback-db -After rollback -Application MyApp -Version 1.1.0 -PerGroup {
+   # this code will run only once per environment
+   # when rolling back MyApp application from 1.1.0 version
+}
+```
 
 ### Custom tasks
 
@@ -492,27 +494,27 @@ You can define your own custom tasks and then apply them to machines in certain 
 
 Let's enjoy a greeting from every server in Staging environment:
 
-    ```posh
-    Set-DeploymentTask hello {
-       Write-Output "Hello from $($env:COMPUTERNAME)!"
-    }
+```posh
+Set-DeploymentTask hello {
+   Write-Output "Hello from $($env:COMPUTERNAME)!"
+}
 
-    Invoke-DeploymentTask hello -On Staging
-    ```
+Invoke-DeploymentTask hello -On Staging
+```
 
 To run the task on "web" servers only add `-DeploymentGroup`:
 
-    ```posh
-    Set-DeploymentTask hello-from-web -DeploymentGroup web {
-       Write-Output "Hello from $($env:COMPUTERNAME)!"
-    }
-    ```
+```posh
+Set-DeploymentTask hello-from-web -DeploymentGroup web {
+   Write-Output "Hello from $($env:COMPUTERNAME)!"
+}
+```
 
 To run a task not in parallel use `-Serial` parameter:
 
-    ```posh
-    Invoke-DeploymentTask hello -On Staging -Serial
-    ```
+```posh
+Invoke-DeploymentTask hello -On Staging -Serial
+```
 
 #### Pushing configuration to remote servers
 
@@ -528,24 +530,24 @@ All tasks run in the same PowerShell scope. The following variables are pre-defi
 
 To define configuration variables on environment level use `-Configuration` parameter:
 
-    ```posh
-    New-Environment Staging -Configuration @{
-      "variable1" = "value1"
-      "variable2" = "value2"
-      ...
-    }
-    ```
+```posh
+New-Environment Staging -Configuration @{
+  "variable1" = "value1"
+  "variable2" = "value2"
+  ...
+}
+```
 
 To define configuration variables on role level use `-Configuration` parameter when adding a role:
 
-    ```posh
-    Add-WebsiteRole MyApp MyWebsite ... -Configuration @{
-      "variable1" = "value1"
-      "appSettings.setting1" = "value2"
-      "connectionStrings.Name" = "connection string details"
-      ...
-    }
-    ```
+```posh
+Add-WebsiteRole MyApp MyWebsite ... -Configuration @{
+  "variable1" = "value1"
+  "appSettings.setting1" = "value2"
+  "connectionStrings.Name" = "connection string details"
+  ...
+}
+```
 
 When extending standard `<deploy|rollback|remove|start|stop>-website` or `<deploy|rollback|remove|start|stop>-service` tasks `$role` variable is added to the scope with current role details:
 
