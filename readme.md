@@ -10,7 +10,7 @@ AppRolla was inspired by Capistrano - a super popular deployment framework from 
 ### Basic example
 Provided AppRolla module is already installed (more on this later) the code below performs the deployment of sample project consisting of **ASP.NET web application** (front-end) and **Windows service** (back-end) to production environment with 2 web (front-end) servers and 2 application (back-end) servers:
 
-	```posh
+```posh
 	Import-Module AppRolla
 
 	# describe application
@@ -33,7 +33,7 @@ Provided AppRolla module is already installed (more on this later) the code belo
 
 	# deploy to Production
     New-Deployment MyApp 1.0.0 -To Production
-	```
+```
 
 ### Features and benefits
 
