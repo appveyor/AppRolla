@@ -29,6 +29,11 @@ Add-EnvironmentServer Production web2.hostname.com -DeploymentGroup web
 Add-EnvironmentServer Production app1.hostname.com -DeploymentGroup app
 Add-EnvironmentServer Production app2.hostname.com -DeploymentGroup app
 
+# custom task to setup database
+Set-DeploymentTask setup-db -Before deploy -DeploymentGroup app -PerGroup {
+   # database setup code goes here
+}
+
 # deploy to Staging
 New-Deployment MyApp 1.0.0 -To Staging
 
@@ -576,6 +581,7 @@ All tasks run in the same PowerShell scope. The following variables are pre-defi
 - `$context.Version` - currently deploying application version.
 - `$context.Server.ServerAddress` - the host name of environment server running the script.
 - `$context.Server.DeploymentGroup` - array of deployment groups assigned to the current server.
+- `$context.Environment.Name` - the name of current environment
 - `$context.Environment.Configuration` - hashtable of configuration variables defined on environment level.
 
 To define configuration variables on environment level use `-Configuration` parameter:

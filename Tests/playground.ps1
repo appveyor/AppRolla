@@ -80,6 +80,11 @@ Set-DeploymentTask task3 -After rollback -Application $applicationName -Version 
 }
 
 
+# custom task to setup database
+Set-DeploymentTask setup-db -Before deploy,remove -DeploymentGroup app -PerGroup {
+   # database setup code goes here
+   Write-Log "Setup database on $($context.Environment.Name)!"
+}
 
 Set-DeploymentTask hello -DeploymentGroup web,app {
     Write-Output "Hello from $($env:COMPUTERNAME)!"
@@ -95,13 +100,13 @@ Set-DeploymentTask hello -DeploymentGroup web,app {
 
 #New-Deployment myapp 1.0.0 -To local -Verbose -Serial
 
-Remove-Deployment myapp -From staging -Verbose -Serial
+#Remove-Deployment myapp -From staging -Verbose -Serial
+Remove-Deployment myapp -From local -Verbose
 
 #Restore-Deployment myapp -On local
 #Restore-Deployment myapp -On staging
 
 #Remove-Deployment myapp -From staging
-#Remove-Deployment $myapp -From $staging
 
 
 #Restore-Deployment myapp -On staging -Verbose -Serial
