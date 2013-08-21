@@ -95,13 +95,13 @@ Set-DeploymentTask hello -DeploymentGroup web,app {
 # perform deployment to staging
 #New-Deployment myapp 1.0.0 -To staging -Verbose #-Serial
 #New-Deployment myapp 1.0.1 -To staging -Verbose #-Serial
-#New-Deployment myapp 1.0.2 -To staging -Verbose #-Serial
+New-Deployment myapp 1.0.2 -To staging -Verbose #-Serial
 #New-Deployment myapp 1.0.4 -To staging -Verbose #-Serial
 
 #New-Deployment myapp 1.0.0 -To local -Verbose -Serial
 
 #Remove-Deployment myapp -From staging -Verbose -Serial
-Remove-Deployment myapp -From local -Verbose
+#Remove-Deployment myapp -From local -Verbose
 
 #Restore-Deployment myapp -On local
 #Restore-Deployment myapp -On staging
