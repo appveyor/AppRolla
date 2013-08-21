@@ -61,15 +61,26 @@ New-Deployment MyApp 1.0.0 -To Production
 
 ### Installing AppRolla
 
-Download [`AppRolla.psm1`](https://github.com/AppVeyor/AppRolla/blob/master/AppRolla.psm1) file to `deployment` directory inside your project repository folder. If you want to install AppRolla globally for your account create new `AppRolla` folder inside `$Home\Documents\WindowsPowerShell\Modules` and put `AppRolla.psm1` into it.
+Download [`AppRolla.psm1`](https://raw.github.com/AppVeyor/AppRolla/master/AppRolla.psm1) file to `deployment` directory inside your project repository folder.
+
+If you want to install AppRolla globally for your account create new `AppRolla` folder inside `$Home\Documents\WindowsPowerShell\Modules` and put `AppRolla.psm1` into it, or just run this script in PowerShel console:
+
+```posh
+$path = "$home\Documents\WindowsPowerShell\Modules\AppRolla"
+New-Item $path -ItemType Directory -Force | Out-Null
+(New-Object Net.WebClient).DownloadFile("https://raw.github.com/AppVeyor/AppRolla/master/AppRolla.psm1", "$path\AppRolla.psm1")
+```
 
 Inside `deployment` directory create a new "configuration" script named [`config.ps1`](https://github.com/AppVeyor/AppRolla/blob/master/config.ps1) where you describe your application and environments. You can use this template for your own config:
 
 ```posh
-# import AppRoller module
+# import AppRolla module
 Remove-Module AppRolla -ErrorAction SilentlyContinue
 $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Definition
 Import-Module (Join-Path $scriptPath AppRolla.psm1)
+
+# use this snippet to import AppRolla module if it was installed globally
+# Import-Module AppRolla
 
 # add application and roles
 New-Application MyApp
