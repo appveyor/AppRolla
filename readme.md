@@ -99,7 +99,6 @@ Add-EnvironmentServer Staging "staging.server.com"
 New-Environment Production
 Add-EnvironmentServer Production "web.server.com" -DeploymentGroup web
 Add-EnvironmentServer Production "app.server.com" -DeploymentGroup app
-
 ```
 
 Now, if want to use AppRolla interactively just open PowerShell console in `deployment` directory and load configuration:
