@@ -208,6 +208,62 @@ function Add-WebSiteRole
     $Application.Roles[$Name] = $role
 }
 
+function Set-WebSiteRole
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true)]
+        $ApplicationName,
+
+        [Parameter(Position=1, Mandatory=$true)]
+        [string]$Name,
+
+        [Parameter(Mandatory=$false)]
+        [string]$DeploymentGroup,
+
+        [Parameter(Mandatory=$false)]
+        [string]$PackageUrl,
+
+        [Parameter(Mandatory=$false)]
+        [string]$BasePath,
+
+        [Parameter(Mandatory=$false)]
+        [string]$WebsiteName,
+
+        [Parameter(Mandatory=$false)]
+        [string]$WebsiteProtocol = $null,
+
+        [Parameter(Mandatory=$false)]
+        [string]$WebsiteIP,
+
+        [Parameter(Mandatory=$false)]
+        [int]$WebsitePort,
+
+        [Parameter(Mandatory=$false)]
+        [string]$WebsiteHost,
+
+        [Parameter(Mandatory=$false)]
+        $Configuration
+    )
+
+    Write-Verbose "Set-WebsiteRole"
+
+    # get role
+    $role = Get-ApplicationRole $ApplicationName $Name
+
+    # update role details
+    if($DeploymentGroup) { $role.DeploymentGroup = $DeploymentGroup }
+    if($PackageUrl) { $role.PackageUrl = $PackageUrl }
+    if($BasePath) { $role.BasePath = $BasePath }
+    if($WebsiteName) { $role.WebsiteName = $WebsiteName }
+    if($WebsiteProtocol) { $role.WebsiteProtocol = $WebsiteProtocol }
+    if($WebsiteIP) { $role.WebsiteIP = $WebsiteIP }
+    if($WebsitePort) { $role.WebsitePort = $WebsitePort }
+    if($WebsiteHost) { $role.WebsiteHost = $WebsiteHost }
+    if($Configuration) { $role.Configuration = $Configuration }
+}
+
 function Add-ServiceRole
 {
     [CmdletBinding()]
@@ -273,6 +329,83 @@ function Add-ServiceRole
 
     $Application.Roles[$Name] = $role
 }
+
+function Set-ServiceRole
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true)]
+        $ApplicationName,
+
+        [Parameter(Position=1, Mandatory=$true)]
+        [string]$Name,
+
+        [Parameter(Mandatory=$false)]
+        [string]$DeploymentGroup,
+
+        [Parameter(Mandatory=$true)]
+        [string]$PackageUrl,
+
+        [Parameter(Mandatory=$false)]
+        [string]$BasePath,
+
+        [Parameter(Mandatory=$false)]
+        [string]$ServiceExecutable,
+
+        [Parameter(Mandatory=$false)]
+        [string]$ServiceName,
+
+        [Parameter(Mandatory=$false)]
+        [string]$ServiceDisplayName,
+
+        [Parameter(Mandatory=$false)]
+        [string]$ServiceDescription,
+
+        [Parameter(Mandatory=$false)]
+        $Configuration
+    )
+
+    Write-Verbose "Set-ServiceRole"
+
+    # get role
+    $role = Get-ApplicationRole $ApplicationName $Name
+
+    # update role details
+    if($DeploymentGroup) { $role.DeploymentGroup = $DeploymentGroup }
+    if($PackageUrl) { $role.PackageUrl = $PackageUrl }
+    if($BasePath) { $role.BasePath = $BasePath }
+    if($ServiceExecutable) { $role.ServiceExecutable = $ServiceExecutable }
+    if($ServiceName) { $role.ServiceName = $ServiceName }
+    if($ServiceDisplayName) { $role.ServiceDisplayName = $ServiceDisplayName }
+    if($ServiceDescription) { $role.ServiceDescription = $ServiceDescription }
+    if($Configuration) { $role.Configuration = $Configuration }
+}
+
+function Get-ApplicationRole
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true)]
+        $ApplicationName,
+
+        [Parameter(Position=1, Mandatory=$true)]
+        $RoleName
+    )
+
+    # get application
+    $application = Get-Application $ApplicationName
+
+    # verify if the role with such name exists
+    $role = $Application.Roles[$RoleName]
+    if($role -eq $null)
+    {
+        throw "Application role $RoleName does not exist."
+    }
+
+    return $role
+}
 #endregion
 
 #region Environment cmdlets
@@ -336,6 +469,31 @@ function Get-Environment
         # return all environments
         return $currentContext.environments.values
     }
+}
+
+function Set-Environment
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true)]
+        $Name,
+
+        [Parameter(Mandatory=$false)]
+        [PSCredential]$Credential,
+
+        [Parameter(Mandatory=$false)]
+        $Configuration
+    )
+
+    Write-Verbose "Set-Environment $Name"
+
+    # find environment
+    $environment = Get-Environment $EnvironmentName
+
+    # update details
+    if($Credential) { $environment.Credential = $Credential }
+    if($Configuration) { $environment.Configuration = $Configuration }
 }
 
 function Add-EnvironmentServer
@@ -2003,7 +2161,7 @@ Add-EnvironmentServer local "localhost"
 # export module members
 Export-ModuleMember -Function `
     Set-DeploymentConfiguration, Get-DeploymentConfiguration, `
-    New-Application, Get-Application, Add-WebSiteRole, Add-ServiceRole, `
-    New-Environment, Get-Environment, Add-EnvironmentServer, `
+    New-Application, Get-Application, Add-WebSiteRole, Add-ServiceRole, Set-WebSiteRole, Set-ServiceRole,`
+    New-Environment, Get-Environment, Set-Environment, Add-EnvironmentServer, `
     Set-DeploymentTask, `
     Invoke-DeploymentTask, New-Deployment, Remove-Deployment, Restore-Deployment, Restart-Deployment, Stop-Deployment, Start-Deployment
