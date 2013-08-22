@@ -489,7 +489,7 @@ function Set-Environment
     Write-Verbose "Set-Environment $Name"
 
     # find environment
-    $environment = Get-Environment $EnvironmentName
+    $environment = Get-Environment $Name
 
     # update details
     if($Credential) { $environment.Credential = $Credential }
