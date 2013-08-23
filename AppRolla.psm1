@@ -34,13 +34,18 @@ $config.SkipCACheck = $true
 # suppress certificate Canonical Name (CN) check when connecting via SSL
 $config.SkipCNCheck = $true
 
+# Azure settings
+$config.UpdateAzureDeployment = $true
+
 # context
 $script:context = @{}
 $currentContext = $script:context
 $currentContext.applications = @{}
 $currentContext.environments = @{}
+$currentContext.azureEnvironments = @{}
 $currentContext.tasks = @{}
 $currentContext.remoteSessions = @{}
+$currentContext.azureSubscription = $null
 
 #region Configuration cmdlets
 function Set-DeploymentConfiguration
@@ -104,6 +109,7 @@ function New-Application
 
     # add new application
     $app = @{
+        Type = "AppRolla"
         Name = $Name
         BasePath = $BasePath
         Configuration = $Configuration
@@ -408,6 +414,75 @@ function Get-ApplicationRole
 }
 #endregion
 
+#region Azure Application cmdlets
+function New-AzureApplication
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true)]
+        [string]$Name,
+
+        [Parameter(Mandatory=$true)]
+        [string]$PackageUrl,
+
+        [Parameter(Mandatory=$true)]
+        [string]$ConfigUrl,
+
+        [Parameter(Mandatory=$false)]
+        $Configuration = @{}
+    )
+
+    Write-Verbose "New-AzureApplication $Name"
+
+    # verify if application already exists
+    if($currentContext.applications[$Name] -ne $null)
+    {
+        throw "Application $Name already exists. Choose a different name."
+    }
+
+    # add new application
+    $app = @{
+        Type = "Azure"
+        Name = $Name
+        PackageUrl = $PackageUrl
+        ConfigUrl = $ConfigUrl
+        Configuration = $Configuration
+    }
+
+    $currentContext.applications[$Name] = $app
+}
+
+function Set-AzureApplication
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true)]
+        [string]$Name,
+
+        [Parameter(Mandatory=$false)]
+        [string]$PackageUrl,
+
+        [Parameter(Mandatory=$false)]
+        [string]$ConfigUrl,
+
+        [Parameter(Mandatory=$false)]
+        $Configuration = @{}
+    )
+
+    Write-Verbose "Set-AzureApplication $Name"
+
+    # get application details
+    $app = Get-Application $Name
+
+    # update details
+    if($PackageUrl) { $app.PackageUrl = $PackageUrl }
+    if($ConfigUrl) { $app.ConfigUrl = $ConfigUrl }
+    if($Configuration) { $app.Configuration = $Configuration }
+}
+#endregion
+
 #region Environment cmdlets
 function New-Environment
 {
@@ -537,6 +612,94 @@ function Add-EnvironmentServer
         Credential = ValueOrDefault $Credential $Environment.Credential
     }
     $Environment.Servers[$ServerAddress] = $server
+}
+#endregion
+
+#region Azure Environment cmdlets
+function New-AzureEnvironment
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true)]
+        $Name,
+
+        [Parameter(Mandatory=$true)]
+        [string]$CloudService,
+
+        [Parameter(Mandatory=$true)]
+        [string]$Slot
+    )
+
+    Write-Verbose "New-AzureEnvironment $Name"
+
+    # create new environment
+    $environment = @{
+        Name = $Name
+        CloudService = $CloudService
+        Slot = $Slot
+    }
+
+    # verify if environment already exists
+    if($currentContext.azureEnvironments[$environment.Name] -eq $null)
+    {
+        $currentContext.azureEnvironments[$environment.Name] = $environment
+    }
+    else
+    {
+        throw "Azure environment $Name already exists. Choose a different name."
+    }
+}
+
+function Get-AzureEnvironment
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$false)]
+        $Name
+    )
+
+    if($Name)
+    {
+        # get specific environment
+        $environment = $currentContext.azureEnvironments[$Name]
+        if($environment -eq $null)
+        {
+            throw "Azure environment $Name not found."
+        }
+        return $environment
+    }
+    else
+    {
+        # return all environments
+        return $currentContext.azureEnvironments.values
+    }
+}
+
+function Set-AzureEnvironment
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true)]
+        $Name,
+
+        [Parameter(Mandatory=$false)]
+        [PSCredential]$Credential,
+
+        [Parameter(Mandatory=$false)]
+        $Configuration
+    )
+
+    Write-Verbose "Set-Environment $Name"
+
+    # find environment
+    $environment = Get-Environment $Name
+
+    # update details
+    if($Credential) { $environment.Credential = $Credential }
+    if($Configuration) { $environment.Configuration = $Configuration }
 }
 #endregion
 
@@ -1077,7 +1240,18 @@ function New-Deployment
         [switch]$Serial = $false
     )
 
-    Invoke-DeploymentTask deploy $environment $application $version -Serial:$serial
+    $app = Get-Application $Application
+
+    if($app.Type -eq "Azure")
+    {
+        # Azure deployment
+        DeployAzureApplication $app $Version $Environment
+    }
+    else
+    {
+        # AppRolla deployment
+        Invoke-DeploymentTask deploy $environment $app $version -Serial:$serial
+    }
 }
 
 function Remove-Deployment
@@ -1178,6 +1352,11 @@ function Start-Deployment
 #endregion
 
 #region Helper functions
+function Write-Log($message)
+{
+    Write-Output "$(Get-Date -f g) - $message"
+}
+
 function IsLocalhost
 {
     [CmdletBinding()]
@@ -1216,7 +1395,7 @@ function ToArray
 }
 #endregion
 
-
+#region AppRolla tasks
 Set-DeploymentTask init {
     
     $m = New-Module -Name "CommonFunctions" -ScriptBlock {
@@ -2153,6 +2332,280 @@ Set-DeploymentTask restart -Requires start,stop {
     Invoke-DeploymentTask stop
     Invoke-DeploymentTask start
 }
+#endregion
+
+#region Azure tasks
+function SetupAzureSubscription()
+{
+    if($currentContext.azureSubscription)
+    {
+        # subscription is already set
+        return
+    }
+
+    # import modules
+    Import-Module Azure
+
+    # variables
+    $tempFolder = [IO.Path]::GetTempPath()
+    $subscriptionId = $config.AzureSubscriptionID
+    $subscriptionCertificate = $config.AzureSubscriptionCertificate
+    $subscriptionName = "DeploySubscription"
+
+    if(-not $subscriptionId -or -not $subscriptionCertificate)
+    {
+        $msg = @"
+"Unable to setup Azure subscription.
+Set Azure subscription details in the global deployment configuration:
+- Set-DeploymentConfiguration AzureSubscriptionID <azure-subscription-id>
+- Set-DeploymentConfiguration AzureSubscriptionCertificate <azure-subscription-certificate-base64>"
+"@
+        throw $msg
+    }
+    
+    # setup
+    $publishSettingsFile = [System.IO.Path]::Combine($tempFolder, "azure-subscription.publishsettings")
+    $publishSettingsXml = @"
+<?xml version="1.0" encoding="utf-8"?>
+<PublishData>
+    <PublishProfile
+    PublishMethod="AzureServiceManagementAPI"
+    Url="https://management.core.windows.net/"
+    ManagementCertificate="$subscriptionCertificate">
+    <Subscription
+        Id="$subscriptionId"
+        Name="$subscriptionName" />
+    </PublishProfile>
+</PublishData>
+"@
+
+    # create publish settings file
+    Write-Log "Create Azure subscription settings file"
+    $sf = New-Item $publishSettingsFile -type file -force -value $publishSettingsXml
+
+    # import subscription
+    Write-Log "Import publishing settings profile"
+    Import-AzurePublishSettingsFile $publishSettingsFile
+    Select-AzureSubscription -SubscriptionName $subscriptionName
+
+    # do not import next time
+    $currentContext.azureSubscription = $subscriptionName
+}
+
+function UpdateAzureCloudServiceConfig($configPath, $configuration)
+{
+    [xml]$xml = New-Object XML
+    $xml.Load($configPath)
+
+    foreach($configSettings in $xml.selectnodes("//*[local-name() = 'ConfigurationSettings']"))
+    {
+        foreach($setting in $configSettings.ChildNodes)
+        {
+            $value = $configuration[$setting.name]
+            if($value -ne $null)
+            {
+                Write-Log "Updating <ConfigurationSettings> entry `"$($setting.name)`" to `"$value`""
+                $setting.value = $value
+            }
+        }
+    }
+    $xml.Save($configPath)
+}
+
+function CreateAzureDeployment
+{
+    param (
+        $serviceName,
+        $slot,
+        $label,
+        $packageUrl,
+        $configPath
+    )
+
+    Write-Log "Creating new $slot deployment in $serviceName"
+
+    # create and wait
+    $deployment = New-AzureDeployment -ServiceName $serviceName -Slot $slot -Label $label -Package $packageUrl -Configuration $configPath
+    WaitForAllCloudServiceInstancesRunning
+
+    # get URL
+    $deployment = Get-AzureDeployment -ServiceName $serviceName -Slot $slot
+    Write-Log "Deployment created, URL: $($deployment.url)"
+}
+
+function UpdateAzureDeployment
+{
+    param (
+        $serviceName,
+        $slot,
+        $label,
+        $packageUrl,
+        $configPath
+    )
+
+    Write-Log "Upgrading $slot deployment in $serviceName"
+
+    $deployment = Set-AzureDeployment -Upgrade -ServiceName $serviceName -Slot $slot -Label $label -Package $packageUrl -Configuration $configPath -Force
+    WaitForAllCloudServiceInstancesRunning
+
+    # get URL
+    $deployment = Get-AzureDeployment -ServiceName $serviceName -Slot $slot
+    Write-Log "Deployment upgraded, URL: $($deployment.url)"
+}
+
+function DeleteAzureDeployment
+{
+    param (
+        $serviceName,
+        $slot
+    )
+
+    Write-Log "Deleting $slot deployment in $serviceName"
+
+    $deployment = Remove-AzureDeployment -Slot $slot -ServiceName $serviceName -Force
+
+    Write-Log "Deployment deleted"
+}
+
+function WaitForAllCloudServiceInstancesRunning
+{
+    param (
+        $serviceName,
+        $slot
+    )
+
+    $deployment = Get-AzureDeployment -ServiceName $serviceName -Slot $slot
+    $instanceStatuses = @("") * $deployment.RoleInstanceList.Count
+    do
+    {
+        $deployment = Get-AzureDeployment -ServiceName $serviceName -Slot $slot
+
+        for($i = 0; $i -lt $deployment.RoleInstanceList.Count; $i++)
+        {
+            $instanceName = $deployment.RoleInstanceList[$i].InstanceName
+            $instanceStatus = $deployment.RoleInstanceList[$i].InstanceStatus
+            if ($instanceStatuses[$i] -ne $instanceStatus)
+            {
+                $instanceStatuses[$i] = $instanceStatus
+                Write-Log "Starting Instance '$instanceName': $instanceStatus"
+            }
+        }
+    }
+    until(AllCloudServiceInstancesRunning($deployment.RoleInstanceList))
+}
+
+function AllCloudServiceInstancesRunning($roleInstanceList)
+{
+    foreach ($roleInstance in $roleInstanceList)
+    {
+        if ($roleInstance.InstanceStatus -ne "ReadyRole")
+        {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function DownloadAzureApplicationConfiguration
+{
+    param (
+        $configUrl,
+        $configuration
+    )
+
+    $storageAccountName = $config.AzureStorageAccountName
+    $storageAccountKey = $config.AzureStorageAccountKey
+
+    if(-not $storageAccountName -or -not $storageAccountKey)
+    {
+        $msg = @"
+"Unable to download Azure application configuration file.
+Set Azure cloud storage account details in the global deployment configuration:
+- Set-DeploymentConfiguration AzureStorageAccountName <storage-account-name>
+- Set-DeploymentConfiguration AzureStorageAccountKey <storage-account-key>"
+"@
+        throw $msg
+    }
+
+    # download .cscfg file
+    $configPath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName())
+    Write-Log "Downloading .cscfg from $configUrl to $configPath"
+
+    # parse URL
+    $hostIdx = $configUrl.indexOf($blobHost)
+    $relativeUrl = $configUrl.substring($hostIdx + $blobHost.length)
+
+    # get container and blob name
+    $idx = $relativeUrl.indexOf("/")
+    $containerName = $relativeUrl.substring(0, $idx)
+    $blobName = $relativeUrl.substring($idx + 1)
+
+    # download config from blob
+    $blobContext = New-AzureStorageContext -StorageAccountName $storageAccountName -StorageAccountKey $storageAccountKey
+    $result = Get-AzureStorageBlobContent -Container $containerName -Blob $blobName -Destination $configPath -Context $blobContext
+
+    # update .cscfg file
+    if($configuration -ne $null)
+    {
+        UpdateAzureCloudServiceConfig $configPath $configuration
+    }
+
+    return $configPath
+}
+
+function DeployAzureApplication
+{
+    param (
+        [Parameter(Position=0, Mandatory=$true)]
+        $application,
+
+        [Parameter(Position=1, Mandatory=$true)]
+        [string]$version,
+
+        [Parameter(Position=2, Mandatory=$true)]
+        $environment
+    )
+
+    if($environment -is [string])
+    {
+        $environment = Get-AzureEnvironment $environment
+    }
+
+    # setup subscription
+    SetupAzureSubscription
+
+    # download configuration file
+    $configPath = DownloadAzureApplicationConfiguration $application.ConfigUrl $application.Configuration
+
+    # deploy
+    Write-Log "Check if $($environment.Slot) deployment already exists"
+    $deployment = Get-AzureDeployment -ServiceName $environment.CloudService -Slot $environment.Slot -ErrorAction SilentlyContinue
+    if ($deployment.Name -ne $null)
+    {
+        Write-Log "$slot deployment exists"
+
+        # should we delete or upgrade existing deployment?
+        if($config.UpdateAzureDeployment)
+        {
+            UpdateAzureDeployment $environment.CloudService $environment.Slot $version $application.PackageUrl $configPath
+        }
+        else
+        {
+            Write-Log "Upgrade is not enabled. Re-creating $($environment.Slot) deployment."
+
+            DeleteAzureDeployment $environment.CloudService $environment.Slot
+            CreateAzureDeployment $environment.CloudService $environment.Slot $version $application.PackageUrl $configPath
+        }
+    }
+    else
+    {
+        Write-Log "$($environment.Slot) deployment does not exist"
+
+        CreateAzureDeployment $environment.CloudService $environment.Slot $version $application.PackageUrl $configPath
+    }
+}
+#endregion
 
 # add local environment
 New-Environment local
@@ -2161,7 +2614,9 @@ Add-EnvironmentServer local "localhost"
 # export module members
 Export-ModuleMember -Function `
     Set-DeploymentConfiguration, Get-DeploymentConfiguration, `
-    New-Application, Get-Application, Add-WebSiteRole, Add-ServiceRole, Set-WebSiteRole, Set-ServiceRole,`
+    New-Application, Get-Application, Add-WebSiteRole, Add-ServiceRole, Set-WebSiteRole, Set-ServiceRole, `
+    New-AzureApplication, Set-AzureApplication, `
     New-Environment, Get-Environment, Set-Environment, Add-EnvironmentServer, `
+    New-AzureEnvironment, Get-AzureEnvironment, Set-AzureEnvironment, `
     Set-DeploymentTask, `
     Invoke-DeploymentTask, New-Deployment, Remove-Deployment, Restore-Deployment, Restart-Deployment, Stop-Deployment, Start-Deployment
