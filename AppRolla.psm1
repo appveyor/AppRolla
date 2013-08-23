@@ -953,7 +953,7 @@ function Invoke-DeploymentTask
                 $stack = $callStack.ToArray()
                 [array]::Reverse($stack)
                 $taskName = $stack -join ":"
-                Write-Output "[$($context.Server.ServerAddress)][$taskName] $(Get-Date -f g) - $message"
+                Write-Host "[$($context.Server.ServerAddress)][$taskName] $(Get-Date -f g) - $message"
             }
 
             function Invoke-DeploymentTask($taskName)
@@ -1272,7 +1272,18 @@ function Remove-Deployment
         [switch]$Serial = $false
     )
 
-    Invoke-DeploymentTask remove $environment $application $version -Serial:$serial
+    $app = Get-Application $Application
+
+    if($app.Type -eq "Azure")
+    {
+        # Azure deployment
+        DeleteAzureDeployment $Environment
+    }
+    else
+    {
+        # AppRolla deployment
+        Invoke-DeploymentTask remove $environment $application $version -Serial:$serial
+    }
 }
 
 function Restore-Deployment
@@ -1354,7 +1365,7 @@ function Start-Deployment
 #region Helper functions
 function Write-Log($message)
 {
-    Write-Output "$(Get-Date -f g) - $message"
+    Write-Host "$(Get-Date -f g) - $message"
 }
 
 function IsLocalhost
@@ -2414,8 +2425,6 @@ function CreateAzureDeployment
         $configPath
     )
 
-    $configPath
-
     Write-Log "Creating new $slot deployment in $serviceName"
 
     # create and wait
@@ -2450,13 +2459,20 @@ function UpdateAzureDeployment
 function DeleteAzureDeployment
 {
     param (
-        $serviceName,
-        $slot
+        $environment
     )
 
-    Write-Log "Deleting $slot deployment in $serviceName"
+    if($environment -is [string])
+    {
+        $environment = Get-AzureEnvironment $environment
+    }
 
-    $deployment = Remove-AzureDeployment -Slot $slot -ServiceName $serviceName -Force
+    # setup subscription
+    SetupAzureSubscription
+
+    Write-Log "Deleting $($environment.Slot) deployment in $($environment.CloudService)"
+
+    $deployment = Remove-AzureDeployment -Slot $environment.Slot -ServiceName $environment.CloudService -Force
 
     Write-Log "Deployment deleted"
 }
@@ -2544,8 +2560,8 @@ Set Azure cloud storage account details in the global deployment configuration:
 
     # download config from blob
     $blobContext = New-AzureStorageContext -StorageAccountName $storageAccountName -StorageAccountKey $storageAccountKey
-    $result = Get-AzureStorageBlobContent -Container $containerName -Blob $blobName -Destination $configPath -Context $blobContext
-
+    Get-AzureStorageBlobContent -Container $containerName -Blob $blobName -Destination $configPath -Context $blobContext | Out-Null
+    
     # update .cscfg file
     if($configuration -ne $null)
     {
@@ -2577,7 +2593,7 @@ function DeployAzureApplication
     SetupAzureSubscription
 
     # download configuration file
-    $configPath = DownloadAzureApplicationConfiguration $application.ConfigUrl $application.Configuration
+    $configPath = (DownloadAzureApplicationConfiguration $application.ConfigUrl $application.Configuration)
 
     # deploy
     Write-Log "Check if $($environment.Slot) deployment already exists"
@@ -2595,7 +2611,7 @@ function DeployAzureApplication
         {
             Write-Log "Upgrade is not enabled. Re-creating $($environment.Slot) deployment."
 
-            DeleteAzureDeployment $environment.CloudService $environment.Slot
+            DeleteAzureDeployment $environment
             CreateAzureDeployment $environment.CloudService $environment.Slot $version $application.PackageUrl $configPath
         }
     }
