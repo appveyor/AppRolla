@@ -2414,6 +2414,8 @@ function CreateAzureDeployment
         $configPath
     )
 
+    $configPath
+
     Write-Log "Creating new $slot deployment in $serviceName"
 
     # create and wait
@@ -2576,8 +2578,6 @@ function DeployAzureApplication
 
     # download configuration file
     $configPath = DownloadAzureApplicationConfiguration $application.ConfigUrl $application.Configuration
-
-    $configPath
 
     # deploy
     Write-Log "Check if $($environment.Slot) deployment already exists"
