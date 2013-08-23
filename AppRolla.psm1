@@ -56,8 +56,8 @@ function Set-DeploymentConfiguration
         [Parameter(Position=0, Mandatory=$true)]
         $Name,
 
-        [Parameter(Position=1, Mandatory=$true)]
-        $Value
+        [Parameter(Position=1, Mandatory=$false)]
+        $Value = $null
     )
 
     $config[$Name] = $Value
