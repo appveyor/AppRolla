@@ -2418,7 +2418,7 @@ function CreateAzureDeployment
 
     # create and wait
     $deployment = New-AzureDeployment -ServiceName $serviceName -Slot $slot -Label $label -Package $packageUrl -Configuration $configPath
-    WaitForAllCloudServiceInstancesRunning
+    WaitForAllCloudServiceInstancesRunning $serviceName $slot
 
     # get URL
     $deployment = Get-AzureDeployment -ServiceName $serviceName -Slot $slot
@@ -2438,7 +2438,7 @@ function UpdateAzureDeployment
     Write-Log "Upgrading $slot deployment in $serviceName"
 
     $deployment = Set-AzureDeployment -Upgrade -ServiceName $serviceName -Slot $slot -Label $label -Package $packageUrl -Configuration $configPath -Force
-    WaitForAllCloudServiceInstancesRunning
+    WaitForAllCloudServiceInstancesRunning $serviceName $slot
 
     # get URL
     $deployment = Get-AzureDeployment -ServiceName $serviceName -Slot $slot
@@ -2576,6 +2576,8 @@ function DeployAzureApplication
 
     # download configuration file
     $configPath = DownloadAzureApplicationConfiguration $application.ConfigUrl $application.Configuration
+
+    $configPath
 
     # deploy
     Write-Log "Check if $($environment.Slot) deployment already exists"
