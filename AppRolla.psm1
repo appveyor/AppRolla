@@ -2347,25 +2347,16 @@ function SetupAzureSubscription()
     Import-Module Azure
 
     # variables
-    $tempFolder = [IO.Path]::GetTempPath()
     $subscriptionId = $config.AzureSubscriptionID
     $subscriptionCertificate = $config.AzureSubscriptionCertificate
     $subscriptionName = "DeploySubscription"
 
-    if(-not $subscriptionId -or -not $subscriptionCertificate)
+    if($subscriptionId -and $subscriptionCertificate)
     {
-        $msg = @"
-"Unable to setup Azure subscription.
-Set Azure subscription details in the global deployment configuration:
-- Set-DeploymentConfiguration AzureSubscriptionID <azure-subscription-id>
-- Set-DeploymentConfiguration AzureSubscriptionCertificate <azure-subscription-certificate-base64>"
-"@
-        throw $msg
-    }
-    
-    # setup
-    $publishSettingsFile = [System.IO.Path]::Combine($tempFolder, "azure-subscription.publishsettings")
-    $publishSettingsXml = @"
+        # setup
+        $tempFolder = [IO.Path]::GetTempPath()
+        $publishSettingsFile = [System.IO.Path]::Combine($tempFolder, "azure-subscription.publishsettings")
+        $publishSettingsXml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <PublishData>
     <PublishProfile
@@ -2379,14 +2370,15 @@ Set Azure subscription details in the global deployment configuration:
 </PublishData>
 "@
 
-    # create publish settings file
-    Write-Log "Create Azure subscription settings file"
-    $sf = New-Item $publishSettingsFile -type file -force -value $publishSettingsXml
+        # create publish settings file
+        Write-Log "Create Azure subscription settings file"
+        $sf = New-Item $publishSettingsFile -type file -force -value $publishSettingsXml
 
-    # import subscription
-    Write-Log "Import publishing settings profile"
-    Import-AzurePublishSettingsFile $publishSettingsFile
-    Select-AzureSubscription -SubscriptionName $subscriptionName
+        # import subscription
+        Write-Log "Import publishing settings profile"
+        Import-AzurePublishSettingsFile $publishSettingsFile
+        Select-AzureSubscription -SubscriptionName $subscriptionName
+    }
 
     # do not import next time
     $currentContext.azureSubscription = $subscriptionName
