@@ -2525,7 +2525,14 @@ Set Azure cloud storage account details in the global deployment configuration:
     Write-Log "Downloading .cscfg from $configUrl to $configPath"
 
     # parse URL
+    $blobHost = ".blob.core.windows.net/"
     $hostIdx = $configUrl.indexOf($blobHost)
+
+    if($hostIdx -eq -1)
+    {
+        throw "Azure Cloud Service package must be uploaded to Azure storage blob and has URL of the form http://<account>.blob.core.windows.net/../package.zip. If you use AppVeyor CI configure custom Azure storage for your account."
+    }
+
     $relativeUrl = $configUrl.substring($hostIdx + $blobHost.length)
 
     # get container and blob name
