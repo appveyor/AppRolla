@@ -2400,11 +2400,32 @@ function UpdateAzureCloudServiceConfig($configPath, $configuration)
     [xml]$xml = New-Object XML
     $xml.Load($configPath)
 
-    foreach($configSettings in $xml.selectnodes("//*[local-name() = 'ConfigurationSettings']"))
+    # iterate through Roles
+    foreach($role in $xml.selectnodes("//*[local-name() = 'Role']"))
     {
-        foreach($setting in $configSettings.ChildNodes)
+        $roleName = $role.Attributes["name"].Value
+
+        # check if the number of instances configured
+        if($configuration[$roleName] -ne $null)
         {
+            # update the number of role instances
+            $instances = $role.SelectSingleNode("*[local-name() = 'Instances']");
+            $instances.Attributes["count"].Value = $configuration[$roleName]
+        }
+
+        # update role settings
+        foreach($setting in $role.SelectSingleNode("*[local-name() = 'ConfigurationSettings']").SelectNodes("*[local-name() = 'Setting']"))
+        {
+            # common setting
             $value = $configuration[$setting.name]
+
+            # role-specific setting
+            $specificValue = $configuration["$($roleName).$($setting.name)"]
+            if($specificValue -ne $null)
+            {
+                $value = $specificValue
+            }
+
             if($value -ne $null)
             {
                 Write-Log "Updating <ConfigurationSettings> entry `"$($setting.name)`" to `"$value`""
@@ -2412,6 +2433,8 @@ function UpdateAzureCloudServiceConfig($configPath, $configuration)
             }
         }
     }
+
+    # save config
     $xml.Save($configPath)
 }
 
