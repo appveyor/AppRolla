@@ -374,7 +374,7 @@ function Set-ServiceRole
         [Parameter(Mandatory=$false)]
         [string]$DeploymentGroup,
 
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$false)]
         [string]$PackageUrl,
 
         [Parameter(Mandatory=$false)]
