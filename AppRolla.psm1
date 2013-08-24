@@ -145,6 +145,30 @@ function Get-Application
     }
 }
 
+function Set-Application
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Position=0, Mandatory=$true)]
+        [string]$Name,
+
+        [Parameter(Mandatory=$false)]
+        [string]$BasePath,
+
+        [Parameter(Mandatory=$false)]
+        $Configuration = @{}
+    )
+
+    Write-Verbose "Set-Application $Name"
+
+    $app = Get-Application $Name
+
+    # update app details
+    if($BasePath) { $app.BasePath = $BasePath }
+    if($Configuration) { $app.Configuration = $Configuration }
+}
+
 
 function Add-WebSiteRole
 {
@@ -2654,7 +2678,7 @@ Add-EnvironmentServer local "localhost"
 # export module members
 Export-ModuleMember -Function `
     Set-DeploymentConfiguration, Get-DeploymentConfiguration, `
-    New-Application, Get-Application, Add-WebSiteRole, Add-ServiceRole, Set-WebSiteRole, Set-ServiceRole, `
+    New-Application, Get-Application, Set-Application, Add-WebSiteRole, Add-ServiceRole, Set-WebSiteRole, Set-ServiceRole, `
     New-AzureApplication, Set-AzureApplication, `
     New-Environment, Get-Environment, Set-Environment, Add-EnvironmentServer, `
     New-AzureEnvironment, Get-AzureEnvironment, Set-AzureEnvironment, `
