@@ -1233,7 +1233,7 @@ function New-Deployment
         [switch]$Serial = $false
     )
 
-    Invoke-DeploymentTask deploy $environment $app $version -Serial:$serial
+    Invoke-DeploymentTask deploy $environment $application $version -Serial:$serial
 }
 
 function Remove-Deployment
