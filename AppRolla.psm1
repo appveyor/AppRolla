@@ -1401,37 +1401,39 @@ Set-DeploymentTask init {
             $xml.Load($configPath)
 
             # appSettings section
-            foreach($appSettings in $xml.selectnodes("//*[local-name() = 'appSettings']"))
-            {
-                foreach($setting in $appSettings.ChildNodes)
-                {
-                    if($setting.key)
-                    {
-                        $value = $variables["appSettings.$($setting.key)"]
-                        if($value -ne $null)
-                        {
-                            Write-Log "Updating <appSettings> entry `"$($setting.key)`" to `"$value`""
-                            $setting.value = $value
-                        }
-                    }
-                }
+            $appSettingsNode = $xml.SelectSingleNode("configuration/appSettings")
+            if ($appSettingsNode -eq $null) {
+              $appSettingsNode = $xml.CreateElement('appSettings')
+              $xml.SelectSingleNode("configuration").AppendChild($appSettingsNode)
+            }
+            foreach ($appSettingKey in $variables.keys | Where { $_.StartsWith("appSettings.") }) {
+              $settingNode = $appSettingsNode.SelectSingleNode("add[@key='$appSettingKey']")
+              if ($settingNode -eq $null) {
+                $settingNode = $xml.CreateElement("add")
+                $settingNode.SetAttribute('key', $appSettingKey.Substring(12))
+                $appSettingsNode.AppendChild($settingNode)
+              }
+              $value = $variables[$appSettingKey]
+              $settingNode.SetAttribute('value', $value)
+              Write-Log "Updating <appSettings> entry `"$appSettingKey.Substring(12)`" to `"$value`""
             }
 
             # connectionStrings
-            foreach($connectionStrings in $xml.selectnodes("//*[local-name() = 'connectionStrings']"))
-            {
-                foreach($entry in $connectionStrings.ChildNodes)
-                {
-                    if($entry.name)
-                    {
-                        $connectionString = $variables["connectionStrings.$($entry.name)"]
-                        if($connectionString -ne $null)
-                        {
-                            Write-Log "Updating <connectionStrings> entry `"$($entry.name)`" to `"$connectionString`""
-                            $entry.connectionString = $connectionString
-                        }
-                    }
-                }
+            $connectionStringsNode = $xml.SelectSingleNode("configuration/connectionStrings")
+            if ($connectionStringsNode -eq $null) {
+              $connectionStringsNode = $xml.CreateElement('connectionStrings')
+              $xml.SelectSingleNode("configuration").AppendChild($connectionStringsNode)
+            }
+            foreach ($connectionStringName in $variables.keys | Where { $_.StartsWith("connectionStrings.") }) {
+              $connectionStringNode = $connectionStringsNode.SelectSingleNode("add[@name='$connectionStringName']")
+              if ($connectionStringNode -eq $null) {
+                $connectionStringNode = $xml.CreateElement("add")
+                $connectionStringNode.SetAttribute('name', $connectionStringName.Substring(18))
+                $connectionStringsNode.AppendChild($connectionStringNode)
+              }
+              $value = $variables[$connectionStringName]
+              $settingNode.SetAttribute('connectionString', $value)
+              Write-Log "Updating <connectionStrings> entry `"$connectionStringName.Substring(18)`" to `"$value`""
             }
 
             $xml.Save($configPath)
@@ -1683,6 +1685,7 @@ Set-DeploymentTask deploy-website {
         {
             Write-Log "Updating web.config in $appConfigPath"
             Update-ApplicationConfig -configPath $webConfigPath -variables $role.Configuration
+            Update-ApplicationConfig -configPath $webConfigPath -variables $context.Environment.Configuration
         }
 
         $appPoolName = $role.WebsiteName
@@ -1804,6 +1807,7 @@ Set-DeploymentTask deploy-service {
         {
             Write-Log "Updating service configuration in $appConfigPath"
             Update-ApplicationConfig -configPath $appConfigPath -variables $role.Configuration
+            Update-ApplicationConfig -configPath $appConfigPath -variables $context.Environment.Configuration
         }
 
         # check if the service already exists
