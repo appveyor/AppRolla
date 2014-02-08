@@ -320,17 +320,35 @@ Add-EnvironmentServer Dev localhost
 
 ##### How to update application configuration files?
 
-AppRolla can update configuration settings in `appSettings` and `connectionString` sections on web.config and app.config files while deploying web applications and Windows services.
+AppRolla can update configuration settings in the `appSettings` and `connectionStrings` sections of the web.config and app.config files while deploying web applications and Windows services.  AppRolla can also poke XML values into the config files using XPath expressions.
 
-Specify configuration settings in the format `appSettings.<key>` or `connectionString.<name>` to update keys in corresponding sections while adding a role:
+Specify configuration settings to be automatically applied using the `appSettings`, `connectionStrings`, and `xmlpoke` config keys. You can specify config values at the role and environment level of your configuration:
 
 ```posh
 Add-WebsiteRole MyApp MyWebsite ... -Configuration {
-  "appSettings.SiteUrl" = "http://www.mysite.com"
+  "appSettings" = @{
+	"SiteUrl" = "http://dev.mysite.com"
+	"SomeValue" = "true"
+  }
+  "connectionStrings" = @{ "Default" = "server=locahost; ..." }
+  "xmlpoke" = @{
+    "configuration/system.web/compilation/@debug" = "true"
+  }
 }
 
 Add-ServiceRole MyApp MyWebsite ... -Configuration {
   "connectionString.Default" = "server=locahost; ..."
+}
+
+New-Environment Production -Configuration @{
+  "appSettings" = @{
+	"SiteUrl" = "http://www.mysite.com"
+	"SomeValue" = "false"
+  }
+  "connectionStrings" = @{ "Default" = "server=locahost; ..." }
+  "xmlpoke" = @{
+    "configuration/system.web/compilation/@debug" = "false"
+  }
 }
 ```
 
@@ -606,8 +624,8 @@ To define configuration variables on role level use `-Configuration` parameter w
 ```posh
 Add-WebsiteRole MyApp MyWebsite ... -Configuration @{
   "variable1" = "value1"
-  "appSettings.setting1" = "value2"
-  "connectionStrings.Name" = "connection string details"
+  "appSettings" = @{ "setting1" = "value2" }
+  "connectionStrings" = @{ "connection string details" }
   ...
 }
 ```
