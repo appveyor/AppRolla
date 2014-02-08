@@ -52,7 +52,7 @@ Add-WebSiteRole MyApp MyWebsite -DeploymentGroup web `
 Add-ServiceRole MyApp MyService -DeploymentGroup app `
     -PackageUrl (Get-AppVeyorPackageUrl $applicationName $applicationVersion "HelloAppVeyor.Service") `
     -Configuration @{
-        "ConnectionString.Default" = "server=locahost;"
+        "connectionStrings" = @{ "Default" = "server=locahost;" }
     }
 
 # add Staging environment
