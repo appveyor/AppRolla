@@ -1401,34 +1401,62 @@ Set-DeploymentTask init {
             $xml.Load($configPath)
 
             # appSettings section
-            foreach($appSettings in $xml.selectnodes("//*[local-name() = 'appSettings']"))
-            {
-                foreach($setting in $appSettings.ChildNodes)
-                {
-                    if($setting.key)
-                    {
-                        $value = $variables["appSettings.$($setting.key)"]
-                        if($value -ne $null)
-                        {
-                            Write-Log "Updating <appSettings> entry `"$($setting.key)`" to `"$value`""
-                            $setting.value = $value
-                        }
-                    }
+            if ($variables.ContainsKey("appSettings")) {
+                $appSettingsNode = $xml.SelectSingleNode("configuration/appSettings")
+                if ($appSettingsNode -eq $null) {
+                  $appSettingsNode = $xml.CreateElement('appSettings')
+                  $xml.SelectSingleNode("configuration").AppendChild($appSettingsNode)
+                }
+                foreach ($appSettingKey in $variables["appSettings"].keys) {
+                  $settingNode = $appSettingsNode.SelectSingleNode("add[@key='$appSettingKey']")
+                  if ($settingNode -eq $null) {
+                    $settingNode = $xml.CreateElement("add")
+                    $settingNode.SetAttribute('key', $appSettingKey)
+                    $appSettingsNode.AppendChild($settingNode)
+                  }
+                  $value = $variables["appSettings"][$appSettingKey]
+                  $settingNode.SetAttribute('value', $value)
+                  Write-Log "Updating <appSettings> entry `"$appSettingKey`" to `"$value`""
                 }
             }
-
+            
             # connectionStrings
-            foreach($connectionStrings in $xml.selectnodes("//*[local-name() = 'connectionStrings']"))
-            {
-                foreach($entry in $connectionStrings.ChildNodes)
-                {
-                    if($entry.name)
-                    {
-                        $connectionString = $variables["connectionStrings.$($entry.name)"]
-                        if($connectionString -ne $null)
-                        {
-                            Write-Log "Updating <connectionStrings> entry `"$($entry.name)`" to `"$connectionString`""
-                            $entry.connectionString = $connectionString
+            if ($variables.ContainsKey("connectionStrings")) {
+                $connectionStringsNode = $xml.SelectSingleNode("configuration/connectionStrings")
+                if ($connectionStringsNode -eq $null) {
+                  $connectionStringsNode = $xml.CreateElement('connectionStrings')
+                  $xml.SelectSingleNode("configuration").AppendChild($connectionStringsNode)
+                }
+
+                foreach ($connectionStringName in $variables["connectionStrings"].keys) {
+                  $connectionStringNode = $connectionStringsNode.SelectSingleNode("add[@name='$connectionStringName']")
+                  if ($connectionStringNode -eq $null) {
+                    $connectionStringNode = $xml.CreateElement("add")
+                    $connectionStringNode.SetAttribute('name', $connectionStringName)
+                    $connectionStringsNode.AppendChild($connectionStringNode)
+                  }
+                  $value = $variables["connectionStrings"][$connectionStringName]
+                  $connectionStringNode.SetAttribute('connectionString', $value)
+                  Write-Log "Updating <connectionStrings> entry `"$connectionStringName`" to `"$value`""
+                }
+            }
+            
+            if ($variables.ContainsKey("xmlpoke")) {
+                foreach ($xpath in $variables["xmlpoke"].keys) {
+                    $value = $variables["xmlpoke"][$xpath]
+                    $node = $xml.SelectSingleNode($xpath)
+                    if ($node) { 
+                        $node.Value = $value 
+                        Write-Log "XmlPoke setting `"$xpath`" to `"$value`""
+                    } else {
+                        $index = $xpath.LastIndexOf('/');
+                        $nodePath = $xpath.Substring(0, $index);
+                        $attrName = $xpath.Substring($index + 2);
+                        $node = $xml.SelectSingleNode($nodePath)
+                        if ($node) {
+                            $node.SetAttribute($attrName, $value)
+                        } else {
+                            Write-Log "XmlPoke setting `"$xpath`" not found"
                         }
                     }
                 }
@@ -1436,7 +1464,7 @@ Set-DeploymentTask init {
 
             $xml.Save($configPath)
         }
-
+        
         function Test-RoleApplicableToServer
         {
             param (
@@ -1683,6 +1711,7 @@ Set-DeploymentTask deploy-website {
         {
             Write-Log "Updating web.config in $appConfigPath"
             Update-ApplicationConfig -configPath $webConfigPath -variables $role.Configuration
+            Update-ApplicationConfig -configPath $webConfigPath -variables $context.Environment.Configuration
         }
 
         $appPoolName = $role.WebsiteName
@@ -1804,6 +1833,7 @@ Set-DeploymentTask deploy-service {
         {
             Write-Log "Updating service configuration in $appConfigPath"
             Update-ApplicationConfig -configPath $appConfigPath -variables $role.Configuration
+            Update-ApplicationConfig -configPath $appConfigPath -variables $context.Environment.Configuration
         }
 
         # check if the service already exists
